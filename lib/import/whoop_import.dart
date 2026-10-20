@@ -92,9 +92,25 @@ class WhoopImporter {
     final deepMin = n(['deep (sws) duration (min)', 'deep sleep duration (min)', 'deep (sws) duration (minutes)']);
     final remMin = n(['rem duration (min)', 'rem duration (minutes)']);
     final awakeMin = n(['awake duration (min)', 'awake duration (minutes)']);
-    final effPct = n(['sleep performance %', 'sleep efficiency %', 'sleep performance']);
+    final effPct = n(['sleep efficiency %', 'sleep efficiency']);
+    final sleepPerformancePct =
+        n(['sleep performance %', 'sleep performance']);
     final sleepOnset = _parseTs(get(['sleep onset']));
     final sleepWake = _parseTs(get(['wake onset']));
+
+    // sleeps.csv overlaps physiological_cycles.csv. If a rich WHOOP day is
+    // already present, a later sleep-only row must not erase recovery/RHR.
+    if (recovery == null && rhr == null && strain == null) {
+      final existing = await LocalDb.dayResult(date);
+      if (existing != null) {
+        try {
+          final prior = jsonDecode(existing['payload_json'] as String);
+          if (prior is Map && prior['source'] == 'whoop_export') return false;
+        } catch (_) {
+          // A malformed prior row should not block a clean import.
+        }
+      }
+    }
 
     final hasSleep = asleepMin != null && asleepMin > 0;
     Map<String, dynamic>? acct, win;
@@ -105,6 +121,7 @@ class WhoopImporter {
         'tst_sec': tstSec,
         'in_bed_sec': spt.round(),
         'efficiency_pct': effPct,
+        'performance_pct': sleepPerformancePct,
         'light_sec': lightMin == null ? null : (lightMin * 60).round(),
         'deep_sec': deepMin == null ? null : (deepMin * 60).round(),
         'rem_sec': remMin == null ? null : (remMin * 60).round(),
@@ -153,13 +170,14 @@ class WhoopImporter {
         'resp_rate': resp,
         'calories': calories,
         'spo2': spo2,
-        // WHOOP gives absolute °C; we store as a relative-ish scalar for trends.
-        'skin_temp_z': skinTempC,
+        // WHOOP gives absolute °C; keep the unit honest and namespaced.
+        'skin_temp_c': skinTempC,
         'tst_min': asleepMin,
         'rem_min': remMin,
         'deep_min': deepMin,
         'light_min': lightMin,
         'efficiency': effPct,
+        'sleep_performance': sleepPerformancePct,
       },
     };
 
@@ -181,11 +199,13 @@ class WhoopImporter {
         'resp_rate': d(resp),
         'calories': d(calories),
         'spo2': d(spo2),
+        'skin_temp_c': d(skinTempC),
         'tst_min': d(asleepMin),
         'rem_min': d(remMin),
         'deep_min': d(deepMin),
         'light_min': d(lightMin),
         'efficiency': d(effPct),
+        'sleep_performance': d(sleepPerformancePct),
       },
     );
     return true;

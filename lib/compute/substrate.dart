@@ -16,6 +16,8 @@ import 'dart:math' as math;
 import 'package:openstrap_analytics/onehz.dart' as ana;
 import 'package:openstrap_protocol/openstrap_protocol.dart' as proto;
 
+import 'recording_quality.dart';
+
 /// The decoded 1 Hz substrate — the only decoded form (ARCHITECTURE_V2).
 ///
 /// All HR/accel/ADC arrays are parallel and 1:1 with [tsSec] (one sample per
@@ -78,9 +80,9 @@ class Substrate {
 
   /// 1 Hz accel samples (one gravity vector per second) for the analytics family.
   List<ana.AccelSample> accelSamples() => <ana.AccelSample>[
-        for (var i = 0; i < tsSec.length; i++)
-          ana.AccelSample(tsSec[i] * 1000.0, ax[i], ay[i], az[i])
-      ];
+    for (var i = 0; i < tsSec.length; i++)
+      ana.AccelSample(tsSec[i] * 1000.0, ax[i], ay[i], az[i]),
+  ];
 
   /// 1 Hz HR as doubles (0 = off-skin). Parallel to [tsSec] / [accelSamples].
   List<double> hr1hz() => [for (final h in hr) h.toDouble()];
@@ -170,32 +172,34 @@ class Substrate {
   }
 
   Map<String, dynamic> toJson() => {
-        'ts_sec': tsSec,
-        'hr': hr,
-        'rr_ts_ms': rrTsMs,
-        'rr_ms': rrMs,
-        'ax': ax,
-        'ay': ay,
-        'az': az,
-        'spo2_red': spo2Red,
-        'spo2_ir': spo2Ir,
-        'skin_temp': skinTemp,
-        'skin_contact': skinContact,
-      };
+    'ts_sec': tsSec,
+    'hr': hr,
+    'rr_ts_ms': rrTsMs,
+    'rr_ms': rrMs,
+    'ax': ax,
+    'ay': ay,
+    'az': az,
+    'spo2_red': spo2Red,
+    'spo2_ir': spo2Ir,
+    'skin_temp': skinTemp,
+    'skin_contact': skinContact,
+  };
 
   static Substrate fromJson(Map<String, dynamic> m) {
     List<int> _i(Map<String, dynamic> m, String k) =>
         ((m[k] as List?) ?? const []).map((e) => (e as num).toInt()).toList();
-    List<double> dbls(String k) =>
-        ((m[k] as List?) ?? const []).map((e) => (e as num).toDouble()).toList();
-        
+    List<double> dbls(String k) => ((m[k] as List?) ?? const [])
+        .map((e) => (e as num).toDouble())
+        .toList();
+
     final tsSec = _i(m, 'ts_sec');
     final n = tsSec.length;
-    
+
     List<int> _safeI(String k) {
       final l = _i(m, k);
       return (l.isEmpty && n > 0) ? List<int>.filled(n, 0) : l;
     }
+
     List<double> _safeD(String k) {
       final l = dbls(k);
       return (l.isEmpty && n > 0) ? List<double>.filled(n, 0.0) : l;
@@ -454,23 +458,42 @@ List<PhysioDay> calendarDays(Substrate sub, {SleepWindowOverride? override}) {
     // full set of sessions that can legitimately end today.
     final searchStart = math.max(dataStart, dayStart - 12 * 3600);
     final searchEnd = math.min(dataEnd, dayEnd);
-    final loS = _lowerBound(sub.tsSec, searchStart);
-    final hiS = _lowerBound(sub.tsSec, searchEnd);
+    final searchLo = _lowerBound(sub.tsSec, searchStart);
+    final searchHi = _lowerBound(sub.tsSec, searchEnd);
 
     var seg = ana.SleepSegmentation.absent;
     var sleepLo = 0, sleepHi = 0;
     var sleepSource = 'none';
+    var insufficientSleepCoverage = false;
     final dayLabel = localDateLabel(dayStart);
     // Does the user have an override (manual / confirmed) for THIS day?
-    final ov =
-        (override != null && override.dayId == dayLabel) ? override : null;
-    if (hiS - loS >= 600 || ov != null) {
+    final ov = (override != null && override.dayId == dayLabel)
+        ? override
+        : null;
+    // Detect within contiguous recordings so a gap cannot become hours of
+    // sleep, or make us discard a separate, well-recorded night.
+    final ranges = <(int, int)>[];
+    var runStart = searchLo;
+    if (ov == null) {
+      for (var i = searchLo + 1; i < searchHi; i++) {
+        if (sub.tsSec[i] - sub.tsSec[i - 1] > 300) {
+          ranges.add((runStart, i));
+          runStart = i;
+        }
+      }
+    }
+    ranges.add((runStart, searchHi));
+    for (final (loS, hiS) in ranges) {
+      if (hiS <= loS || (hiS - loS < 600 && ov == null)) continue;
       final habitualMidsleepSec = ana.habitualMidsleepSecFromHistory(
         sleepHistory,
         tzOffsetSeconds: DateTime.now().timeZoneOffset.inSeconds,
       );
       // Daytime HR baseline = valid HR before the nocturnal search window.
-      final base = <double>[for (var i = 0; i < loS; i++) if (hr[i] > 0) hr[i]];
+      final base = <double>[
+        for (var i = 0; i < loS; i++)
+          if (hr[i] > 0) hr[i],
+      ];
       final hrBaseline = base.length >= 60 ? base : null;
       final accelSlice = accel.sublist(loS, hiS);
       final hrSlice = hr.sublist(loS, hiS);
@@ -515,8 +538,11 @@ List<PhysioDay> calendarDays(Substrate sub, {SleepWindowOverride? override}) {
           // Propose the longest sustained nocturnal HR dip, then STAGE it via the
           // forced-window path. Marked low-confidence for a "is this right?" prompt.
           final tsSlice = [for (var i = loS; i < hiS; i++) sub.tsSec[i]];
-          final cand =
-              ana.hrLedSleepWindow(hrSlice, tsSlice, hrBaseline: hrBaseline);
+          final cand = ana.hrLedSleepWindow(
+            hrSlice,
+            tsSlice,
+            hrBaseline: hrBaseline,
+          );
           if (cand != null) {
             final s2 = ana.segmentSleep(
               accelSlice,
@@ -524,8 +550,10 @@ List<PhysioDay> calendarDays(Substrate sub, {SleepWindowOverride? override}) {
               hrBaseline: hrBaseline,
               rrMs: rrMsSeg,
               rrTsMs: rrTsSeg,
-              forcedWindow:
-                  (onsetSec: cand.onsetSec, offsetSec: cand.offsetSec),
+              forcedWindow: (
+                onsetSec: cand.onsetSec,
+                offsetSec: cand.offsetSec,
+              ),
             );
             if (s2.present) {
               s = s2;
@@ -537,45 +565,57 @@ List<PhysioDay> calendarDays(Substrate sub, {SleepWindowOverride? override}) {
 
       if (s.present && s.window != null) {
         final offSec = s.window!.offsetMs! ~/ 1000;
+        final onSec = (s.window!.onsetMs ?? 0) ~/ 1000;
+        final covered = hasSleepRecordingCoverage(sub.tsSec, onSec, offSec);
+        insufficientSleepCoverage = insufficientSleepCoverage || !covered;
         // Auto/fallback: attribute only if the wake lands in this calendar day.
         // Manual/confirmed: trust the user — attribute to the day they set it on.
         final userSet = ov != null;
-        if (userSet || (offSec >= dayStart && offSec < dayEnd)) {
+        final longer =
+            !seg.present ||
+            ((s.toJson()['tst_sec'] as num?) ?? 0) >
+                ((seg.toJson()['tst_sec'] as num?) ?? 0);
+        if (covered &&
+            longer &&
+            (userSet || (offSec >= dayStart && offSec < dayEnd))) {
           seg = s;
           sleepLo = loS + s.window!.onsetIdx;
           sleepHi = loS + s.window!.offsetIdx;
           sleepSource = src;
-          final onsetSec = s.window!.onsetMs == null
-              ? 0
-              : (s.window!.onsetMs! / 1000).round();
-          if (onsetSec > 0 && offSec > onsetSec) {
-            sleepHistory.add((
-              startSec: onsetSec,
-              endSec: offSec,
-              dayKey: dayLabel,
-            ));
-          }
         }
       }
     }
 
-    days.add(PhysioDay(
-      date: dayLabel,
-      startSec: cs,
-      endSec: ce,
-      sleep: seg,
-      sleepLoIdx: sleepLo,
-      sleepHiIdx: sleepHi,
-      confidence: seg.present ? seg.confidence : 0.0,
-      sleepSource: sleepSource,
-      flags: seg.present
-          ? (sleepSource == 'auto_fallback'
-              ? const <String>['SLEEP_FALLBACK']
-              : (sleepSource == 'manual' || sleepSource == 'confirmed'
-                  ? const <String>['SLEEP_MANUAL']
-                  : const <String>[]))
-          : const <String>['NO_SLEEP_DETECTED'],
-    ));
+    if (seg.present && seg.window != null) {
+      sleepHistory.add((
+        startSec: (seg.window!.onsetMs ?? 0) ~/ 1000,
+        endSec: seg.window!.offsetMs! ~/ 1000,
+        dayKey: dayLabel,
+      ));
+    }
+
+    days.add(
+      PhysioDay(
+        date: dayLabel,
+        startSec: cs,
+        endSec: ce,
+        sleep: seg,
+        sleepLoIdx: sleepLo,
+        sleepHiIdx: sleepHi,
+        confidence: seg.present ? seg.confidence : 0.0,
+        sleepSource: sleepSource,
+        flags: seg.present
+            ? (sleepSource == 'auto_fallback'
+                  ? const <String>['SLEEP_FALLBACK']
+                  : (sleepSource == 'manual' || sleepSource == 'confirmed'
+                        ? const <String>['SLEEP_MANUAL']
+                        : const <String>[]))
+            : <String>[
+                'NO_SLEEP_DETECTED',
+                if (insufficientSleepCoverage) 'INSUFFICIENT_SLEEP_COVERAGE',
+              ],
+      ),
+    );
     dayStart = dayEnd;
   }
   return days;

@@ -26,15 +26,6 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>NSAccessorySetupBluetoothServices</key>
-	<array>
-		<string>61080001-8D6D-82B8-614A-1C8CB0F8DCC6</string>
-		<string>FD4B0001-CCE1-4033-93CE-002D5875F58A</string>
-	</array>
-	<key>NSAccessorySetupKitSupports</key>
-	<array>
-		<string>Bluetooth</string>
-	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>OpenStrap connects to your WHOOP band over Bluetooth to sync your health data.</string>
 	<key>NSHealthShareUsageDescription</key>
@@ -45,19 +36,8 @@
 	<string>OpenStrap connects to your WHOOP band over Bluetooth to sync your health data.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>OpenStrap records your route on a map during a run, ride or walk so you can see it, colored by heart-rate zone, when the workout ends. Your location stays on this device and is never uploaded.</string>
-	<!-- NSLocationAlwaysAndWhenInUseUsageDescription: not requested by app code
-	     (gps_source.dart sets allowBackgroundLocationUpdates: false, WhenInUse
-	     only — see the UIBackgroundModes comment below). geolocator_apple's
-	     PermissionHandler.m links [CLLocationManager requestAlwaysAuthorization]
-	     unconditionally, which App Store Connect's static binary scan (ITMS-90683)
-	     flags even though that path is never invoked at runtime. -->
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>OpenStrap does not track your location in the background. This permission is linked by a dependency but unused — the app only ever asks for location access while you're actively viewing a workout route.</string>
-	<!-- NSPhotoLibraryUsageDescription: not used by app code — import_screen.dart's
-	     only FilePicker call uses FileType.any (Files app / UIDocumentPicker),
-	     never .image/.media. file_picker's iOS podspec unconditionally bundles
-	     DKImagePickerController/PhotoGallery + DKPhotoGallery, which link
-	     PHPhotoLibrary APIs and trip the same ITMS-90683 static scan. -->
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>OpenStrap does not access your photo library. This permission is linked by a dependency but unused — importing your own exported WHOOP data uses the Files app, not Photos.</string>
 	<key>NSSupportsLiveActivities</key>
@@ -87,16 +67,6 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
-	<!-- BGTaskSchedulerPermittedIdentifiers: the BGProcessingTask used by
-	     BgSyncScheduler.swift for opportunistic headless sync + heavy derivation,
-	     plus the lighter BGAppRefreshTask (sync-only, no heavy derive) that uses
-	     the separate app-refresh budget iOS grants alongside processing tasks.
-	     NOTE: "location" is deliberately NOT in UIBackgroundModes. The workout
-	     route feature uses WHILE-IN-USE location only (foreground / active-session
-	     with the app alive), so continuous background-location updates aren't
-	     needed and "always"/background-location is a documented follow-up. Adding
-	     the background "location" mode without that need risks App Store rejection.
-	     "processing" enables BGProcessingTask; "fetch" enables BGAppRefreshTask. -->
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>wtf.openstrap.edge.bgsync</string>
@@ -125,5 +95,9 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 </dict>
 </plist>

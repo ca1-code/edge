@@ -1,3 +1,6 @@
+> [!IMPORTANT]
+> **Unofficial personal fork** of [OpenStrap Edge](https://github.com/OpenStrap/edge), with changes for daily use on a WHOOP 5. See **[FORK.md](FORK.md)** for what's new. Not affiliated with OpenStrap.
+
 # Openstrap Edge
 
 An app that makes a WHOOP 4.0 useful without a WHOOP subscription. Connects to the band over Bluetooth, computes everything on your phone locally iOS and Android.

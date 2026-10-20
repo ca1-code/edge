@@ -22,6 +22,7 @@
 //         the curve series the UI needs + indexed scalars. Survives jsonEncode.
 
 import 'dart:math' as math;
+import 'recording_quality.dart';
 
 import 'package:openstrap_analytics/onehz.dart';
 
@@ -194,19 +195,9 @@ Map<String, dynamic> deriveDayBundle(Map<String, dynamic> inputJson) {
   final dayHr = [for (final h in d.dayHr) h.toDouble()];
   final dayHrValid = dayHr.where((h) => h > 0).toList();
 
-  // ── WORN minutes — distinct wall-clock minutes that have ANY record ────────
-  // Wear is RECORD presence, NOT valid HR. The band logs 1 Hz to flash only
-  // while on-wrist (off-wrist it stops and emits WRIST_OFF), so a record in a
-  // minute means the band was worn that minute. We deliberately do NOT gate on
-  // HR>0: a valid HR needs a still wrist + good optical contact, which happens
-  // mostly during SLEEP, so an HR-valid count collapses "worn" to ~the sleep
-  // duration (the 24 h-worn-shows-7 h bug). Bucketing by real epoch-second
-  // timestamp (not array index) is also gap-safe.
-  final wornMinuteBuckets = <int>{};
-  for (final ts in d.dayTsSec) {
-    wornMinuteBuckets.add(ts ~/ 60);
-  }
-  final wornMin = wornMinuteBuckets.length;
+  // Recorded seconds are not proof of continuous wear. A lone measurement
+  // in a minute contributes one second, not a whole minute.
+  final wornMin = d.dayTsSec.toSet().length / 60.0;
 
   // ── HR over the SLEEP WINDOW (RHR / dip night-side) ────────────────────────
   final sleepHr = [for (final h in d.sleepHr) h.toDouble()];
@@ -215,12 +206,15 @@ Map<String, dynamic> deriveDayBundle(Map<String, dynamic> inputJson) {
   // HRV/RHR are rest/sleep-only per the catalog. Running correctRr+hrvTime over
   // the SLEEP RR (not the whole day) is what brings RMSSD back to physiological
   // tens-of-ms instead of the whole-day ~166 ms inflated value.
-  final corrected = correctRr(d.sleepRrMs);
+  final hasSleep = (d.sleepJson['tst_sec']) != null;
+  final continuousSleepRr =
+      hasSleep && hasContinuousRrRecording(d.sleepRrTsMs, d.sleepRrMs);
+  // These legacy estimators rebuild time by summing RR intervals. Feeding
+  // disconnected fragments would silently erase gaps and invent continuity.
+  final corrected = correctRr(continuousSleepRr ? d.sleepRrMs : <double>[]);
   final nn = corrected.nn;
   final nnTimes = corrected.nnTimesMs;
   final artifactFraction = (1.0 - corrected.cleanFraction).clamp(0.0, 1.0);
-
-  final hasSleep = (d.sleepJson['tst_sec']) != null;
 
   // ── SLEEP: everything from the SINGLE-SOURCE segmentation ──────────────────
   final sleepWinJson = (d.sleepJson['window'] as Map?)?.cast<String, dynamic>();
@@ -245,23 +239,19 @@ Map<String, dynamic> deriveDayBundle(Map<String, dynamic> inputJson) {
   // RMSSD follows the sleep-session windowed formulation.
   final nremMask = _nremMaskAlignedToNn(d, nnTimes, d.sleepRrTsMs);
   final robustRmssd = nocturnalRmssd(nn, nnTimes, stageMaskPerSec: nremMask);
-  final sleepSessionRmssdMetric = sleepSessionWindowedRmssd(
-    d.sleepRrMs,
-    d.sleepRrTsMs,
-    startSec: d.sleepOnsetSec,
-    endSec: d.sleepOffsetSec,
-  );
-  final sleepSessionRmssd = sleepSessionRmssdMetric.present
-      ? sleepSessionRmssdMetric.value
-      : null;
+  final sleepHrvWindows = recordedHrvWindows(d.sleepRrTsMs, d.sleepRrMs);
+  final sleepSessionRmssd = !hasSleep || sleepHrvWindows.isEmpty
+      ? null
+      : sleepHrvWindows.map((w) => w['v']!.toDouble()).reduce((a, b) => a + b) /
+            sleepHrvWindows.length;
   final hrvF = nn.length >= 20
       ? hrvFreq(nn, nnTimes, artifactFraction: artifactFraction)
       : const Metric<HrvFreq>.absent(
           tier: Tier.high,
           inputs_used: ['rr_cleaned'],
         );
-  // Nocturnal RHR over the SLEEP HR (fallback to day-valid only if no sleep HR).
-  final rhr = nocturnalRhr(sleepHr.isNotEmpty ? sleepHr : dayHrValid);
+  // Daytime measurements are not a substitute for a missing sleep recording.
+  final rhr = nocturnalRhr(hasSleep ? sleepHr : const <double>[]);
   // HR dip: day-side = waking HR outside the sleep window; night-side = sleep HR.
   final dayOnly = _dayHrOutsideSleep(d);
   final dip = hrDip(dayOnly, sleepHr);
@@ -295,7 +285,9 @@ Map<String, dynamic> deriveDayBundle(Map<String, dynamic> inputJson) {
   // Runs over the WHOLE-DAY cleaned RR (not just sleep) so an arrhythmia screen
   // isn't limited to the sleep window. Hard-gated on beat count + artifact inside
   // irregularBeatScreen; returns absent on a thin/noisy day.
-  final dayCorrected = correctRr(d.dayRrMs);
+  final dayCorrected = correctRr(
+    hasContinuousRrRecording(d.dayRrTsMs, d.dayRrMs) ? d.dayRrMs : <double>[],
+  );
   final irregular24h = irregularBeatScreen(
     dayCorrected.nn,
     artifactFraction: (1.0 - dayCorrected.cleanFraction).clamp(0.0, 1.0),
@@ -373,7 +365,10 @@ Map<String, dynamic> deriveDayBundle(Map<String, dynamic> inputJson) {
       'hrv': {'value': lnToday != null, 'baseline_n': d.lnRmssdHistory.length},
       'rhr': {'value': rhrToday != null, 'baseline_n': d.rhrHistory.length},
       'resp': {'value': respToday != null, 'baseline_n': d.respHistory.length},
-      'temp': {'value': skinTempAdc != null, 'baseline_n': d.skinTempAdcHistory.length},
+      'temp': {
+        'value': skinTempAdc != null,
+        'baseline_n': d.skinTempAdcHistory.length,
+      },
       'note': composite.note,
     };
   }
@@ -435,7 +430,7 @@ Map<String, dynamic> deriveDayBundle(Map<String, dynamic> inputJson) {
   // ── curve series for the UI ────────────────────────────────────────────────
   final hrCurve = _downsampleHr(d.dayTsSec, d.dayHr);
   final hypnogram = _hypnogramSegments(d);
-  final hrvTimeline = _hrvTimeline(nn, nnTimes);
+  final hrvTimeline = sleepHrvWindows;
   final strainCurve = _strainCurve(
     wakeHr,
     restingHr: rhrForTrimp,
@@ -493,12 +488,12 @@ Map<String, dynamic> deriveDayBundle(Map<String, dynamic> inputJson) {
     // retained alongside it as a secondary detail for comparison/debugging.
     'rmssd_sleep_session': {
       'value': sleepSessionRmssd == null ? '—' : _round(sleepSessionRmssd, 1),
-      'confidence': sleepSessionRmssdMetric.present
-          ? _round(sleepSessionRmssdMetric.confidence, 4)
-          : 0,
+      'confidence': sleepSessionRmssd == null ? 0 : 0.5,
       'tier': Tier.high,
       'inputs_used': const ['rr_sleep_window'],
-      'note': sleepSessionRmssdMetric.note,
+      'note':
+          'Mean of recorded five-minute windows with >=80% accepted RR coverage; estimate.',
+      'valid_windows': sleepHrvWindows.length,
     },
     'rmssd_nocturnal': robustRmssd.toJson(),
     'hrv_freq': hrvF.toJson((v) => v.toJson()),
@@ -585,16 +580,8 @@ Map<String, dynamic> deriveDayBundle(Map<String, dynamic> inputJson) {
 
   // Indexed scalars (also surfaced to metric_series by the engine).
   final rhrScalar = rhr.present ? rhr.value!.low30Mean : null;
-  // HEADLINE RMSSD = mean of 5-min cleaned-window RMSSDs across the detected
-  // sleep session. Fall back to the robust estimator, then the whole-window
-  // RMSSD only when the canonical sleep-session value is absent.
-  final rmssdScalar =
-      sleepSessionRmssd ??
-      (robustRmssd.present
-          ? robustRmssd.value
-          : ((hrvT.present && hrvT.value!.rmssd != null)
-                ? hrvT.value!.rmssd
-                : null));
+  // A sparse window must stay absent; never fall back to concatenated RR.
+  final rmssdScalar = sleepSessionRmssd;
   // Whole-window RMSSD kept available as a secondary detail (NOT the headline).
   final rmssdWholeScalar = (hrvT.present && hrvT.value!.rmssd != null)
       ? hrvT.value!.rmssd
@@ -802,6 +789,9 @@ Map<String, dynamic> deriveDayBundle(Map<String, dynamic> inputJson) {
       // Active calories (Keytel) + nocturnal HR detail (nadir / waking HR).
       'calories': caloriesKcal == null ? null : _round(caloriesKcal, 0),
       'sleeping_hr_nadir': nadir,
+      'sleeping_hr_avg': hasSleep
+          ? _mean(sleepHr.where((h) => h > 0).toList())
+          : null,
       'sleeping_hr_nadir_ts': nadirTs?.toDouble(),
       'waking_hr': wakingHr,
       // Sleep-stage minutes + HRV freq/stability — surfaced as scalars so they
@@ -1034,30 +1024,6 @@ List<Map<String, num>> _downsampleHr(List<int> tsSec, List<int> hr) {
 }
 
 /// HRV timeline: RMSSD over rolling ~5-min windows of cleaned NN, {t, v}.
-List<Map<String, num>> _hrvTimeline(List<double> nn, List<double> nnTimes) {
-  if (nn.length < 10 || nnTimes.length != nn.length) return const [];
-  const winMs = 300000.0; // 5 min
-  final out = <Map<String, num>>[];
-  var lo = 0;
-  for (var i = 0; i < nn.length; i++) {
-    while (nnTimes[i] - nnTimes[lo] > winMs) {
-      lo++;
-    }
-    if (i - lo >= 10) {
-      var ssd = 0.0;
-      for (var k = lo + 1; k <= i; k++) {
-        final diff = nn[k] - nn[k - 1];
-        ssd += diff * diff;
-      }
-      final rmssd = math.sqrt(ssd / (i - lo));
-      if (out.isEmpty || nnTimes[i] - out.last['t']! * 1000 > 60000) {
-        out.add({'t': (nnTimes[i] / 1000).round(), 'v': _round(rmssd, 1)});
-      }
-    }
-  }
-  return out;
-}
-
 /// Hypnogram segments {start,end,stage} (epoch seconds) from the single-source
 /// per-second stage labels (d.hypnoStages over the sleep window). Display-ready.
 List<Map<String, dynamic>> _hypnogramSegments(DayBundleInput d) {

@@ -11,6 +11,8 @@ import '../design/design.dart';
 /// One-line, honest explanation per metric key. Lives behind the (i) so users
 /// can learn what they're looking at without the screen reading like a manual.
 const Map<String, String> kMetricInfo = {
+  'hr': 'Heart rate from saved readings. Each recorded day contributes its '
+      'average; missing days are excluded and recorded days may be incomplete.',
   'recovery': "How recovered you are — tonight's HRV vs your own baseline.",
   'hrv':
       'Beat-to-beat variability in sleep. Higher usually means better recovery.',

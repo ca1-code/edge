@@ -21,11 +21,14 @@ import '../../theme/theme_switcher.dart';
 import '../design/design.dart';
 import '../widgets/screen_loader.dart';
 import '../widgets/status_banner.dart';
+import '../widgets/recording_notice.dart';
 import '../journal/journal_screen.dart';
 import '../recap/recap_screen.dart';
 import '../ai/ai_breakdown_screen.dart';
 import '../coach/coach_screen.dart';
 import '../profile/profile_screen.dart';
+import '../profile/data_history_screen.dart';
+import 'analysis_status_card.dart';
 import '../screens/screens.dart';
 import '../journey/journey_screen.dart';
 import '../stress/stress_screen.dart';
@@ -124,7 +127,7 @@ class _TodayScreenState extends State<TodayScreen>
 
   @override
   Widget build(BuildContext context) {
-    // SELECT the 3 fields _emptyOrProcessing actually reads, not the whole
+    // SELECT the 3 fields the analysis status actually reads, not the whole
     // AppState — this screen used to fully rebuild on EVERY notifyListeners()
     // (67 call sites incl. per-second timers and every derive-day callback),
     // which is exactly what made a multi-day backfill/reanalyze visibly
@@ -187,9 +190,16 @@ class _TodayScreenState extends State<TodayScreen>
             const SizedBox(height: Sp.x2),
             if (phase == LoadPhase.loading)
               ..._skeleton()
-            else if (phase == LoadPhase.empty)
-              _emptyOrProcessing(app)
-            else if (phase == LoadPhase.error)
+            else if (phase == LoadPhase.empty) ...[
+              RecordingNotice(
+                recording: data is Map
+                    ? (data as Map)['recording'] as Map?
+                    : null,
+              ),
+              _recordedHeartCard(),
+              const SizedBox(height: Sp.x3),
+              _analysisCard(app),
+            ] else if (phase == LoadPhase.error)
               StateCard(
                 icon: OsIcon.sync,
                 title: "Couldn't load today",
@@ -234,6 +244,12 @@ class _TodayScreenState extends State<TodayScreen>
     // "screen is glitching" symptom). Keys let it match by identity instead
     // of position, so a banner toggling on/off never disturbs its siblings.
     return [
+      RecordingNotice(
+        key: const ValueKey('today-recording'),
+        recording: data is Map ? (data as Map)['recording'] as Map? : null,
+      ),
+      _recordedHeartCard(),
+      const SizedBox(height: Sp.x3),
       if (_showStory(t)) ...[
         KeyedSubtree(
           key: const ValueKey('today-story'),
@@ -274,14 +290,16 @@ class _TodayScreenState extends State<TodayScreen>
       // briefing is generated opportunistically on foreground.
       KeyedSubtree(
         key: const ValueKey('today-ai-summary'),
-        child: Builder(builder: (_) {
-          final period = currentBriefingPeriod(DateTime.now());
-          final brief = BriefingStore.read(period);
-          return AiSummaryCard(
-            summary: brief?.oneLiner,
-            onTap: () => _push(() => AiBreakdownScreen(period: period)),
-          );
-        }).dsEnter(index: 0),
+        child: Builder(
+          builder: (_) {
+            final period = currentBriefingPeriod(DateTime.now());
+            final brief = BriefingStore.read(period);
+            return AiSummaryCard(
+              summary: brief?.oneLiner,
+              onTap: () => _push(() => AiBreakdownScreen(period: period)),
+            );
+          },
+        ).dsEnter(index: 0),
       ),
       if (alert != null) ...[
         const SizedBox(height: Sp.x3),
@@ -311,6 +329,11 @@ class _TodayScreenState extends State<TodayScreen>
       KeyedSubtree(
         key: const ValueKey('today-lookback'),
         child: _lookbackCard().dsEnter(index: 6),
+      ),
+      const SizedBox(height: Sp.x3),
+      KeyedSubtree(
+        key: const ValueKey('today-analysis'),
+        child: _analysisCard(app),
       ),
     ];
   }
@@ -353,7 +376,8 @@ class _TodayScreenState extends State<TodayScreen>
   /// Illness / overtraining early-warning — one chip + the note behind (i).
   Widget _alertChipRow(Map<String, dynamic> a) {
     final kind = (a['kind'] ?? '').toString();
-    final note = (a['note'] ?? 'Your body is showing strain signals.').toString();
+    final note = (a['note'] ?? 'Your body is showing strain signals.')
+        .toString();
     final title = kind == 'overtraining'
         ? 'High training load'
         : kind == 'both'
@@ -382,7 +406,8 @@ class _TodayScreenState extends State<TodayScreen>
         icon: OsIcon.today,
         iconColor: AppColors.accent,
         title: "Today's plan",
-        subtitle: top?.title ??
+        subtitle:
+            top?.title ??
             (coach.summary.isEmpty ? "You're all set today." : coach.summary),
         trailing: tgt == null
             ? null
@@ -419,7 +444,11 @@ class _TodayScreenState extends State<TodayScreen>
               const OsAppIcon(OsIcon.heartRate, size: 34),
               const SizedBox(width: Sp.x2),
               Expanded(child: Text('LOOKBACK', style: AppText.overline)),
-              AppIcon(OsIcon.arrowRight, size: 15, color: AppColors.onSurfaceFaint),
+              AppIcon(
+                OsIcon.arrowRight,
+                size: 15,
+                color: AppColors.onSurfaceFaint,
+              ),
             ],
           ),
           const SizedBox(height: Sp.x3),
@@ -464,60 +493,42 @@ class _TodayScreenState extends State<TodayScreen>
 
   // ── states ───────────────────────────────────────────────────────────────────
 
-  /// Honest empty/processing state. Three cases, never a blank-with-no-reason:
-  ///   • analysis running  → "Processing… N/M days" with a spinner.
-  ///   • decoded data collected, not yet derived → invite to analyze now.
-  ///   • truly no data      → "Wear + sync to see today".
-  Widget _emptyOrProcessing(AppState app) {
-    final raw = app.dbCounts['decoded_onehz'] ?? app.dbCounts['raw'] ?? 0;
-    if (app.reanalyzing) {
-      return SurfaceCard(
-        padding: const EdgeInsets.all(Sp.x6),
-        child: Column(
-          children: [
-            SizedBox(
-              width: 30,
-              height: 30,
-              child: CircularProgressIndicator(
-                strokeWidth: 2.5,
-                color: AppColors.accent,
-              ),
-            ),
-            const SizedBox(height: Sp.x4),
-            Text('Processing your data',
-                style: AppText.h2, textAlign: TextAlign.center),
-            const SizedBox(height: Sp.x2),
-            Text(
-              app.reanalyzeProgress.isEmpty
-                  ? 'Analyzing your stored data…'
-                  : '${app.reanalyzeProgress.replaceFirst('Analyzing', 'Processing')} days',
-              style: AppText.bodySoft,
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      );
-    }
-    if (raw > 0) {
-      return StateCard(
-        icon: OsIcon.history,
-        title: 'Data collected — not analyzed yet',
-        message:
-            'Stored $raw raw record${raw == 1 ? '' : 's'} from your strap. '
-            'Analysis runs automatically after a sync — or run it now.',
-        actionLabel: 'Analyze now',
-        onAction: () => app.reanalyzeAll(),
-      );
-    }
-    return const StateCard(
-      icon: OsIcon.wear,
-      title: 'Wear + sync to see today',
-      message:
-          'Put your strap on and keep the app open. Your daily metrics '
-          'appear after the next sync and analytics run. If your strap has '
-          'been recording for a while, the first sync can take a few '
-          "minutes — it's just pulling everything it's been holding onto. "
-          'After that, syncs are quick.',
+  Map<dynamic, dynamic> _section(String name) =>
+      data is Map && (data as Map)[name] is Map
+      ? (data as Map)[name] as Map
+      : const {};
+
+  Widget _recordedHeartCard() => RecordedHeartCard(
+    heart: _section('recorded_heart'),
+    onOpen: () => _push(() => const HeartScreen()),
+  );
+
+  Widget _analysisCard(AppState app) => AnalysisStatusCard(
+    analysis: _section('analysis'),
+    running: app.reanalyzing,
+    progress: app.reanalyzeProgress,
+    onAnalyze: () => _runAnalysis(app),
+    onHistory: () => _push(() => const DataHistoryScreen()),
+  );
+
+  Future<void> _runAnalysis(AppState app) async {
+    if (app.reanalyzing) return;
+    final result = await app.reanalyzeAll();
+    if (!mounted) return;
+    await refresh(background: true);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Re-analysis results'),
+        content: Text(result.message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -661,23 +672,13 @@ class TodayVitals extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (statusChip != null) ...[
-          const SizedBox(height: Sp.x3),
-          statusChip,
-        ],
+        if (statusChip != null) ...[const SizedBox(height: Sp.x3), statusChip],
         // The hero floats directly on the page — no card chrome around it.
         _orbitHero().dsEnter(index: 1),
         const SizedBox(height: Sp.x2),
         BentoColumns(
-          left: [
-            _hrvTile(context),
-            _caloriesTile(),
-          ],
-          right: [
-            _rhrTile(),
-            _stepsTile(),
-            _oxygenTile(),
-          ],
+          left: [_hrvTile(context), _caloriesTile()],
+          right: [_rhrTile(), _stepsTile(), _oxygenTile()],
         ),
         if (week != null) ...[const SizedBox(height: Sp.x3), week],
         const SizedBox(height: Sp.x3),
@@ -726,8 +727,11 @@ class TodayVitals extends StatelessWidget {
               'is shown${status.overnightDay != null ? ' (${status.overnightDay})' : ''}.';
     return Row(
       children: [
-        StatusChip(label, icon: OsIcon.activity,
-            tone: building ? ChipTone.warn : ChipTone.neutral),
+        StatusChip(
+          label,
+          icon: OsIcon.activity,
+          tone: building ? ChipTone.warn : ChipTone.neutral,
+        ),
         InfoDot(title: label, body: body),
         const Spacer(),
       ],
@@ -832,7 +836,8 @@ class TodayVitals extends StatelessWidget {
     required String title,
     required String body,
     String? methodNote,
-  }) => showInfoSheet(context, title: title, body: body, methodNote: methodNote);
+  }) =>
+      showInfoSheet(context, title: title, body: body, methodNote: methodNote);
 
   Widget _hrvTile(BuildContext context) {
     final hrv = t.hrv;
@@ -1124,69 +1129,85 @@ class _RecoveryStoryState extends State<_RecoveryStory>
   List<Widget Function()> _buildPanels() {
     final panels = <Widget Function()>[];
     // 1. Recovered.
-    panels.add(() => _panel(
-          overline: 'RECOVERED',
-          gauge: ArcGauge(
-            value: (widget.recoveredPct / 100).clamp(0.0, 1.0),
-            color: AppColors.glow1,
-            size: 132,
-            stroke: 12,
-            endDot: true,
-            center: Text('${widget.recoveredPct}',
-                style: AppText.display.copyWith(color: Colors.white)),
+    panels.add(
+      () => _panel(
+        overline: 'RECOVERED',
+        gauge: ArcGauge(
+          value: (widget.recoveredPct / 100).clamp(0.0, 1.0),
+          color: AppColors.glow1,
+          size: 132,
+          stroke: 12,
+          endDot: true,
+          center: Text(
+            '${widget.recoveredPct}',
+            style: AppText.display.copyWith(color: Colors.white),
           ),
-          line: widget.recoveredPct >= 66
-              ? 'You’re primed — a strong day to push.'
-              : widget.recoveredPct >= 40
-                  ? 'Moderately recovered — train to feel.'
-                  : 'Run low today — favour easy movement.',
-        ));
+        ),
+        line: widget.recoveredPct >= 66
+            ? 'You’re primed — a strong day to push.'
+            : widget.recoveredPct >= 40
+            ? 'Moderately recovered — train to feel.'
+            : 'Run low today — favour easy movement.',
+      ),
+    );
     // 2. Sleep.
     if (widget.sleptMin != null && widget.needMin != null) {
       final slept = widget.sleptMin!, need = widget.needMin!;
       String hm(int m) => '${m ~/ 60}h ${(m % 60).toString().padLeft(2, '0')}m';
-      panels.add(() => _panel(
-            overline: 'SLEEP',
-            gauge: ArcGauge(
-              value: need == 0 ? 0 : (slept / need).clamp(0.0, 1.0),
-              color: AppColors.loadDetraining,
-              size: 132,
-              stroke: 12,
-              center: Text(hm(slept),
-                  style: AppText.metricSm.copyWith(color: Colors.white)),
+      panels.add(
+        () => _panel(
+          overline: 'SLEEP',
+          gauge: ArcGauge(
+            value: need == 0 ? 0 : (slept / need).clamp(0.0, 1.0),
+            color: AppColors.loadDetraining,
+            size: 132,
+            stroke: 12,
+            center: Text(
+              hm(slept),
+              style: AppText.metricSm.copyWith(color: Colors.white),
             ),
-            line: 'of your ${hm(need)} need',
-          ));
+          ),
+          line: 'of your ${hm(need)} need',
+        ),
+      );
     }
     // 3. HRV.
     if (widget.hrvRmssd != null) {
-      panels.add(() => _panel(
-            overline: 'HRV (RMSSD)',
-            gauge: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('${widget.hrvRmssd!.round()}',
-                    style: AppText.display.copyWith(color: Colors.white)),
-                Text('ms',
-                    style: AppText.caption.copyWith(color: Colors.white54)),
-              ],
-            ),
-            trailing: widget.hrvDelta == null
-                ? null
-                : BaselineDeltaChip(widget.hrvDelta, unit: 'ms'),
-            line: widget.hrvDelta == null
-                ? 'Beat-to-beat variability last night'
-                : 'vs your normal',
-          ));
+      panels.add(
+        () => _panel(
+          overline: 'HRV (RMSSD)',
+          gauge: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '${widget.hrvRmssd!.round()}',
+                style: AppText.display.copyWith(color: Colors.white),
+              ),
+              Text(
+                'ms',
+                style: AppText.caption.copyWith(color: Colors.white54),
+              ),
+            ],
+          ),
+          trailing: widget.hrvDelta == null
+              ? null
+              : BaselineDeltaChip(widget.hrvDelta, unit: 'ms'),
+          line: widget.hrvDelta == null
+              ? 'Beat-to-beat variability last night'
+              : 'vs your normal',
+        ),
+      );
     }
     // 4. Today's plan.
     if (widget.planTitle != null) {
-      panels.add(() => _panel(
-            overline: 'TODAY’S PLAN',
-            gauge: const AppIcon(OsIcon.ai, size: 56, color: Colors.white),
-            line: widget.planTitle!,
-            sub: widget.planBody,
-          ));
+      panels.add(
+        () => _panel(
+          overline: 'TODAY’S PLAN',
+          gauge: const AppIcon(OsIcon.ai, size: 56, color: Colors.white),
+          line: widget.planTitle!,
+          sub: widget.planBody,
+        ),
+      );
     }
     return panels;
   }
@@ -1205,23 +1226,24 @@ class _RecoveryStoryState extends State<_RecoveryStory>
         Text(overline, style: AppText.overline.copyWith(color: Colors.white54)),
         const SizedBox(height: Sp.x4),
         gauge,
-        if (trailing != null) ...[
-          const SizedBox(height: Sp.x3),
-          trailing,
-        ],
+        if (trailing != null) ...[const SizedBox(height: Sp.x3), trailing],
         const SizedBox(height: Sp.x4),
-        Text(line,
-            style: AppText.title.copyWith(color: Colors.white),
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis),
+        Text(
+          line,
+          style: AppText.title.copyWith(color: Colors.white),
+          textAlign: TextAlign.center,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
         if (sub != null) ...[
           const SizedBox(height: Sp.x2),
-          Text(sub,
-              style: AppText.bodySoft.copyWith(color: Colors.white60),
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis),
+          Text(
+            sub,
+            style: AppText.bodySoft.copyWith(color: Colors.white60),
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
         ],
       ],
     );
@@ -1255,7 +1277,12 @@ class _RecoveryStoryState extends State<_RecoveryStory>
                   }
                 },
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(Sp.x6, Sp.x7, Sp.x6, Sp.x6),
+                  padding: const EdgeInsets.fromLTRB(
+                    Sp.x6,
+                    Sp.x7,
+                    Sp.x6,
+                    Sp.x6,
+                  ),
                   child: AnimatedSwitcher(
                     duration: Motion.med,
                     child: _panels[_idx](),
@@ -1281,12 +1308,13 @@ class _RecoveryStoryState extends State<_RecoveryStory>
                             value: i < _idx
                                 ? 1.0
                                 : i == _idx
-                                    ? _c.value
-                                    : 0.0,
+                                ? _c.value
+                                : 0.0,
                             minHeight: 3,
                             backgroundColor: Colors.white24,
-                            valueColor:
-                                const AlwaysStoppedAnimation(Colors.white),
+                            valueColor: const AlwaysStoppedAnimation(
+                              Colors.white,
+                            ),
                           ),
                         ),
                       ),

@@ -15,6 +15,8 @@ class Sample {
   final int? spo2RedRaw;
   final int? spo2IrRaw;
   final int? skinTempRaw;
+  // WHOOP 5 v18 exposes HR/RR/gravity but not WHOOP 4's raw optical pair.
+  final bool isGen5;
 
   Sample({
     required this.tsEpoch,
@@ -27,6 +29,7 @@ class Sample {
     this.spo2RedRaw,
     this.spo2IrRaw,
     this.skinTempRaw,
+    this.isGen5 = false,
   });
 
   /// Copy with an overridden [tsEpoch] — used by the clock-offset salvage path
@@ -44,6 +47,7 @@ class Sample {
     spo2RedRaw: spo2RedRaw,
     spo2IrRaw: spo2IrRaw,
     skinTempRaw: skinTempRaw,
+    isGen5: isGen5,
   );
 
   bool get wristOn => hr > 0;
@@ -51,9 +55,10 @@ class Sample {
       ax != null &&
       ay != null &&
       az != null &&
-      spo2RedRaw != null &&
-      spo2IrRaw != null &&
-      skinTempRaw != null;
+      (isGen5 ||
+          (spo2RedRaw != null &&
+              spo2IrRaw != null &&
+              skinTempRaw != null));
 
   Map<String, dynamic> toDbMap() => {
     'ts': tsEpoch,

@@ -111,17 +111,21 @@ class _AdvancedDataScreenState extends State<AdvancedDataScreen> {
     final app = context.read<AppState>();
     setState(() => _busy = true);
     try {
-      final n = await app.reanalyzeAll();
+      final result = await app.reanalyzeAll();
       if (!mounted) return;
       await _load();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            n > 0
-                ? 'Recomputed $n day${n == 1 ? '' : 's'}.'
-                : 'No raw data to analyze yet.',
-          ),
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Re-analysis results'),
+          content: Text(result.message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Done'),
+            ),
+          ],
         ),
       );
     } finally {

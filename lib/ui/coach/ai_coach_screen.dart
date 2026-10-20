@@ -297,7 +297,7 @@ class _AiCoachScreenState extends State<AiCoachScreen> {
             icon: OsIcon.ai,
             title: 'Bring your own AI',
             message:
-                'Use any OpenAI-compatible provider with your own API key. Your '
+                'Use Anthropic (Claude) or an OpenAI-compatible provider with your own API key. Your '
                 'key stays on this device and talks to the provider directly — '
                 'it never touches OpenStrap servers.',
             actionLabel: 'Set up your AI coach',

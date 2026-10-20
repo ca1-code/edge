@@ -291,18 +291,26 @@ class TrendBoard extends StatelessWidget {
     final unit = data['unit']?.toString() ?? '';
     final label = data['label']?.toString() ?? title;
     final summary = (data['summary'] as Map?)?.cast<String, dynamic>();
+    final present = [
+      for (final b in buckets)
+        (b as Map)['has'] != false && b['value'] is num &&
+            (b['value'] as num).isFinite,
+    ];
     final values = [
-      for (final b in buckets) ((b as Map)['value'] as num?)?.toDouble() ?? 0.0,
+      for (var i = 0; i < buckets.length; i++)
+        present[i] ? (buckets[i]['value'] as num).toDouble() : 0.0,
     ];
     final labels = [
       for (var i = 0; i < buckets.length; i++)
         trendBarLabel(scale, i, buckets[i] as Map),
     ];
-    final allZero = values.every((v) => v == 0);
+    final hasData = present.any((has) => has);
     final avg = summary?['avg'] as num?;
     final delta = summary?['delta_vs_prev'] as num?;
     final met = summary?['met_count'] as num?;
     final total = summary?['total'] as num?;
+    final days = (summary?['days_with_data'] as num?)?.toInt();
+    final periodDays = (summary?['days_in_period'] as num?)?.toInt();
     final showUnit = unit.isNotEmpty && metric != 'sleep' && metric != 'wear';
     final info = infoFor(metric);
 
@@ -341,7 +349,7 @@ class TrendBoard extends StatelessWidget {
                 child: BigStat(
                   value: avg == null ? null : _fmtAvg(avg),
                   unit: showUnit ? unit : null,
-                  caption: 'average',
+                  caption: 'average of recorded days',
                   size: BigStatSize.xl,
                 ),
               ),
@@ -351,8 +359,21 @@ class TrendBoard extends StatelessWidget {
               ],
             ],
           ),
+          if (hasData && days != null && periodDays != null) ...[
+            const SizedBox(height: Sp.x2),
+            Text(
+              'Based on $days of $periodDays days'
+              '${days < periodDays ? ' · partial period' : ''}',
+              style: AppText.captionMuted,
+            ),
+          ],
+          if (hasData && metric == 'hr') ...[
+            const SizedBox(height: Sp.x2),
+            Text('Uses recorded readings; days may be incomplete.',
+                style: AppText.captionMuted),
+          ],
           const SizedBox(height: Sp.x5),
-          if (allZero)
+          if (!hasData)
             SizedBox(
               height: 120,
               child: Center(
@@ -363,6 +384,7 @@ class TrendBoard extends StatelessWidget {
           else ...[
             LabeledBars(
               values: values,
+              present: present,
               labels: labels,
               color: accent,
               highlight: selected,

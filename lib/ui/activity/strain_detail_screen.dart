@@ -15,6 +15,7 @@ import '../kit/kit.dart';
 import '../kit/charts.dart';
 import '../screens/metric_row.dart';
 import '../screens/trend_screen.dart';
+import '../widgets/recording_notice.dart';
 
 class StrainDetailScreen extends StatefulWidget {
   final String date; // 'YYYY-MM-DD'
@@ -104,7 +105,10 @@ class _StrainDetailScreenState extends State<StrainDetailScreen> {
 
   bool _isEmpty(Map<String, dynamic> d) {
     final strain = _num(d['strain'])?.toDouble() ?? 0;
-    return _curve().isEmpty && strain <= 0;
+    return _curve().isEmpty &&
+        strain <= 0 &&
+        (_map(d['hr'])['avg'] is! num) &&
+        d['recording'] == null;
   }
 
   // ── defensive parsing helpers ───────────────────────────────────────────────
@@ -356,7 +360,8 @@ class _StrainDetailScreenState extends State<StrainDetailScreen> {
       for (final dr in _list(_map(_data['drivers'])['strain'])) _map(dr),
     ].where((dr) => (dr['label']?.toString() ?? '').isNotEmpty).toList();
     return [
-      _hero(),
+      RecordingNotice(recording: _data['recording'] as Map?),
+      if (_data['strain'] is num) _hero(),
       const SizedBox(height: Sp.x4),
       if (hasLoad) ...[
         const SectionHeader('Training load'),
@@ -364,9 +369,9 @@ class _StrainDetailScreenState extends State<StrainDetailScreen> {
         const SizedBox(height: Sp.x4),
       ],
       ..._fitnessSection(),
-      _curveCard(),
+      if (_curve().isNotEmpty) _curveCard(),
       const SizedBox(height: Sp.x4),
-      _zonesCard(),
+      if (_data['strain'] is num) _zonesCard(),
       const SizedBox(height: Sp.x4),
       _hrStatsRow(),
       const SizedBox(height: Sp.x4),
@@ -455,7 +460,11 @@ class _StrainDetailScreenState extends State<StrainDetailScreen> {
                     color: AppColors.surfaceSunk,
                     borderRadius: BorderRadius.circular(R.chip),
                   ),
-                  child: AppIcon(OsIcon.heartRate, size: 17, color: AppColors.inkMuted),
+                  child: AppIcon(
+                    OsIcon.heartRate,
+                    size: 17,
+                    color: AppColors.inkMuted,
+                  ),
                 ),
                 const SizedBox(width: Sp.x3),
                 Expanded(
@@ -824,7 +833,11 @@ class _StrainDetailScreenState extends State<StrainDetailScreen> {
                   color: AppColors.coralSoft,
                   shape: BoxShape.circle,
                 ),
-                child: AppIcon(OsIcon.run, size: 20, color: AppColors.coralDeep),
+                child: AppIcon(
+                  OsIcon.run,
+                  size: 20,
+                  color: AppColors.coralDeep,
+                ),
               ),
               const SizedBox(width: Sp.x4),
               Expanded(

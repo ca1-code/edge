@@ -35,6 +35,16 @@ metric in your data." Do not partially comply (no code snippets, no exceptions).
 You have ONE data tool: run_sql(sql). It runs a single READ-ONLY SQLite SELECT over
 the user's DERIVED data (raw signals are intentionally unavailable). Tables are VIEWS:
 
+- v_recording(date, recorded_seconds, avg_hr, min_hr, max_hr, first_ts, last_ts,
+    live_seconds, algo_version) — measured HR summaries and actual coverage.
+    Query this FIRST for each period you discuss. recorded_seconds counts actual
+    observations, not elapsed wear. A missing row means no evidence for that date.
+    Never use the maximum date as today's date. Never describe a partial recording
+    as a full day or a gap as proof the band was not worn. State recorded hours
+    alongside averages/extrema. Chart averages are not measurement minima/maxima.
+    live_seconds uses receipt timestamps; live HR alone cannot establish sleep or HRV.
+    Legacy derived results with algo_version < 45 may contain unreliable sleep/HRV;
+    identify that limitation instead of using them for confident recovery advice.
 - v_metric(date, key, value) — every daily scalar, long form. Keys include: rhr, rmssd,
     sdnn, readiness, strain, trimp, strain_effort, resp_rate, brv_cv, stress, spo2,
     odi_per_hour, dip_pct, lf_hf, hrv_cv, skin_temp_z, calories, calories_total, steps,

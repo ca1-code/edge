@@ -16,12 +16,14 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../data/db.dart';
+import '../../data/build_identity.dart';
 import '../../health/health_export.dart';
 import '../../platform/tasker_bridge.dart';
 import '../../state/app_state.dart';
 import '../../state/units_controller.dart';
 import '../../debug/debug_mode.dart';
-import '../../telemetry/health_uploader.dart' show kHealthDataContributionEnabled;
+import '../../telemetry/health_uploader.dart'
+    show kHealthDataContributionEnabled;
 import '../../theme/theme_switcher.dart';
 import '../ai/ai_settings_screen.dart';
 import '../design/design.dart';
@@ -40,9 +42,21 @@ class ProfileScreen extends StatelessWidget {
 
   // Community links. Editable here; swap any URL and rebuild — no backend needed.
   static const List<({String label, OsIcon icon, String url})> _socials = [
-    (icon: OsIcon.activity, label: 'GitHub', url: 'https://github.com/OpenStrap'),
-    (icon: OsIcon.activity, label: 'Discord', url: 'https://discord.gg/dUXds5MWkd'),
-    (icon: OsIcon.activity, label: 'Reddit', url: 'https://reddit.com/r/openstrap'),
+    (
+      icon: OsIcon.activity,
+      label: 'GitHub',
+      url: 'https://github.com/OpenStrap',
+    ),
+    (
+      icon: OsIcon.activity,
+      label: 'Discord',
+      url: 'https://discord.gg/dUXds5MWkd',
+    ),
+    (
+      icon: OsIcon.activity,
+      label: 'Reddit',
+      url: 'https://reddit.com/r/openstrap',
+    ),
     (icon: OsIcon.activity, label: 'X', url: 'https://x.com/OpenStrap'),
   ];
 
@@ -79,30 +93,33 @@ class ProfileScreen extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
       ),
       actions: [
-        RoundIconButton(OsIcon.edit,
-            onTap: () => _editProfileSheet(context, app)),
+        RoundIconButton(
+          OsIcon.edit,
+          onTap: () => _editProfileSheet(context, app),
+        ),
       ],
       children: [
-          // ── Your device ──────────────────────────────────────────────
-          const SectionHeader('Your device'),
-          _deviceTile(context, app),
-          // Android: battery-optimization (Doze) exemption — without it the OS
-          // can freeze the background BLE session between events overnight.
-          if (Platform.isAndroid) const _KeepAliveRow(),
-          // iOS: force-quitting the app is an unrecoverable OS contract — no
-          // background relaunch of any kind (CoreBluetooth restoration,
-          // BGTaskScheduler) fires again until the user manually reopens it
-          // once. Not fixable in code; this is the one-time explanation so
-          // "why did my data stop updating" has an answer, tied to the
-          // staleness notification (checkSyncStaleness) that eventually
-          // prompts the user to do exactly that.
-          if (Platform.isIOS) const _ForceQuitInfoRow(),
+        // ── Your device ──────────────────────────────────────────────
+        const SectionHeader('Your device'),
+        _deviceTile(context, app),
+        // Android: battery-optimization (Doze) exemption — without it the OS
+        // can freeze the background BLE session between events overnight.
+        if (Platform.isAndroid) const _KeepAliveRow(),
+        // iOS: force-quitting the app is an unrecoverable OS contract — no
+        // background relaunch of any kind (CoreBluetooth restoration,
+        // BGTaskScheduler) fires again until the user manually reopens it
+        // once. Not fixable in code; this is the one-time explanation so
+        // "why did my data stop updating" has an answer, tied to the
+        // staleness notification (checkSyncStaleness) that eventually
+        // prompts the user to do exactly that.
+        if (Platform.isIOS) const _ForceQuitInfoRow(),
 
-          const SizedBox(height: Sp.x6),
+        const SizedBox(height: Sp.x6),
 
-          // ── Profile ──────────────────────────────────────────────────
-          const SectionHeader('Profile'),
-          _SettingsCard(rows: [
+        // ── Profile ──────────────────────────────────────────────────
+        const SectionHeader('Profile'),
+        _SettingsCard(
+          rows: [
             ListRow(
               title: 'Name',
               value: name.isEmpty ? 'Add' : name,
@@ -136,14 +153,16 @@ class ProfileScreen extends StatelessWidget {
                   : 'Add',
               onTap: () => _editProfileSheet(context, app),
             ),
-          ]),
-          const _CardNote('Body metrics improve your calorie estimate.'),
+          ],
+        ),
+        const _CardNote('Body metrics improve your calorie estimate.'),
 
-          const SizedBox(height: Sp.x6),
+        const SizedBox(height: Sp.x6),
 
-          // ── Goals ────────────────────────────────────────────────────
-          const SectionHeader('Goals'),
-          _SettingsCard(rows: [
+        // ── Goals ────────────────────────────────────────────────────
+        const SectionHeader('Goals'),
+        _SettingsCard(
+          rows: [
             ListRow(
               icon: OsIcon.steps,
               title: 'Daily step goal',
@@ -159,21 +178,27 @@ class ProfileScreen extends StatelessWidget {
                 ),
               ),
             ),
-          ]),
+          ],
+        ),
 
-          const SizedBox(height: Sp.x6),
+        const SizedBox(height: Sp.x6),
 
-          // ── Data ─────────────────────────────────────────────────────
-          const SectionHeader('Data'),
-          _SettingsCard(rows: [
+        // ── Data ─────────────────────────────────────────────────────
+        const SectionHeader('Data'),
+        Padding(
+          padding: const EdgeInsets.only(bottom: Sp.x3),
+          child: Text(kEdgeBuildLabel, style: AppText.captionMuted),
+        ),
+        _SettingsCard(
+          rows: [
             ListRow(
               icon: OsIcon.history,
               title: 'Import data',
               value: 'NOOP · Edge · WHOOP',
               divider: true,
-              onTap: () => Navigator.of(
-                context,
-              ).push(themedRoute((_) => const ImportScreen(), name: 'ImportScreen')),
+              onTap: () => Navigator.of(context).push(
+                themedRoute((_) => const ImportScreen(), name: 'ImportScreen'),
+              ),
             ),
             ListRow(
               icon: OsIcon.sync,
@@ -187,6 +212,7 @@ class ProfileScreen extends StatelessWidget {
             ListRow(
               icon: OsIcon.activity,
               title: 'Re-analyze data',
+              subtitle: 'Rebuild saved days and workout HR averages',
               value: app.reanalyzing
                   ? (app.reanalyzeProgress.isEmpty
                         ? 'Working…'
@@ -195,15 +221,19 @@ class ProfileScreen extends StatelessWidget {
               divider: true,
               onTap: () async {
                 if (app.reanalyzing) return;
-                final messenger = ScaffoldMessenger.of(context);
-                final n = await app.reanalyzeAll();
-                messenger.showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      n > 0
-                          ? 'Analyzed $n day${n == 1 ? '' : 's'} of stored data.'
-                          : 'No raw data to analyze yet.',
-                    ),
+                final result = await app.reanalyzeAll();
+                if (!context.mounted) return;
+                await showDialog<void>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('Re-analysis results'),
+                    content: Text(result.message),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: const Text('Done'),
+                      ),
+                    ],
                   ),
                 );
               },
@@ -243,10 +273,12 @@ class ProfileScreen extends StatelessWidget {
               title: 'Data history',
               value: 'Manage',
               divider: advancedDebugMode,
-              onTap: () => Navigator.of(
-                context,
-              ).push(themedRoute((_) => const DataHistoryScreen(),
-                  name: 'DataHistoryScreen')),
+              onTap: () => Navigator.of(context).push(
+                themedRoute(
+                  (_) => const DataHistoryScreen(),
+                  name: 'DataHistoryScreen',
+                ),
+              ),
             ),
             // Debug-build-only deep inspection tools (raw stores, sync ledger).
             if (advancedDebugMode)
@@ -254,122 +286,126 @@ class ProfileScreen extends StatelessWidget {
                 icon: OsIcon.settings,
                 title: 'Advanced data',
                 value: 'Debug tools',
-                onTap: () => Navigator.of(
-                  context,
-                ).push(themedRoute((_) => const AdvancedDataScreen(),
-                    name: 'AdvancedDataScreen')),
-              ),
-          ]),
-
-          const SizedBox(height: Sp.x6),
-
-          // ── Apple Health (iOS) / Health Connect (Android) ─────────────
-          SectionHeader(app.healthStoreName),
-          _HealthSection(app: app),
-
-          const SizedBox(height: Sp.x6),
-
-          // ── Units (local display preference) ─────────────────────────
-          const SectionHeader('Units'),
-          SurfaceCard(
-            padding: const EdgeInsets.all(Sp.x4),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                SegmentedControl(
-                  options: [for (final s in UnitSystem.values) s.label],
-                  index: UnitSystem.values.indexOf(units.system),
-                  expanded: true,
-                  onChanged: (i) => units.setSystem(UnitSystem.values[i]),
-                ),
-                const SizedBox(height: Sp.x2),
-                Center(
-                  child: Text(
-                    units.system == UnitSystem.metric
-                        ? 'kg · cm'
-                        : 'lb · ft/in',
-                    style: AppText.captionMuted,
+                onTap: () => Navigator.of(context).push(
+                  themedRoute(
+                    (_) => const AdvancedDataScreen(),
+                    name: 'AdvancedDataScreen',
                   ),
                 ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: Sp.x6),
-
-          // ── Cycle tracking (explicit opt-in) ─────────────────────────
-          const SectionHeader('Cycle tracking'),
-          _ToggleCard(
-            icon: OsIcon.calendar,
-            iconColor: DomainAccent.cycle,
-            title: 'Track menstrual cycle',
-            subtitle:
-                'Log periods and see phase, next period & fertile window. '
-                'Off by default — nothing is computed until you turn this on.',
-            value: user['track_cycle'] == true || user['track_cycle'] == 1,
-            onChanged: (v) async {
-              try {
-                await app.updateProfile({'track_cycle': v ? 1 : 0});
-              } catch (_) {}
-            },
-          ),
-
-          const SizedBox(height: Sp.x6),
-
-          // ── Privacy (opt-in companion data — also offered at onboarding) ──
-          const SectionHeader('Privacy'),
-          _ToggleCard(
-            icon: OsIcon.info,
-            title: 'Send anonymous diagnostics',
-            subtitle:
-                'Crash/error reports plus basic device info. No health data. '
-                'On by default — switch off anytime.',
-            value: app.telemetryConsent,
-            onChanged: (v) => app.setTelemetryConsent(v),
-          ),
-          // Health-data contribution (full on-device DB upload) is a
-          // compile-time-gated feature (see kHealthDataContributionEnabled) —
-          // never offered in a store-review-facing build, only in a
-          // sideload/direct-distribution build that opted in. Hide the
-          // toggle entirely rather than leave it visible-but-inert.
-          if (kHealthDataContributionEnabled) ...[
-            const SizedBox(height: Sp.x3),
-            _ToggleCard(
-              icon: OsIcon.activity,
-              title: 'Contribute my health data',
-              subtitle:
-                  'Periodically upload your on-device database (over Wi-Fi, '
-                  'while charging) to improve the algorithms. On by default — '
-                  'switch off anytime.',
-              value: app.healthShareConsent,
-              onChanged: (v) => app.setHealthShareConsent(v),
-            ),
+              ),
           ],
+        ),
 
-          const SizedBox(height: Sp.x6),
+        const SizedBox(height: Sp.x6),
 
-          // ── Appearance ───────────────────────────────────────────────
-          const SectionHeader('Appearance'),
-          const SurfaceCard(child: AppearanceSelector(labeled: true)),
+        // ── Apple Health (iOS) / Health Connect (Android) ─────────────
+        SectionHeader(app.healthStoreName),
+        _HealthSection(app: app),
 
-          const SizedBox(height: Sp.x6),
+        const SizedBox(height: Sp.x6),
 
-          // ── Gestures ─────────────────────────────────────────────────
-          const SectionHeader('Gestures'),
-          const GestureSettingsCard(),
+        // ── Units (local display preference) ─────────────────────────
+        const SectionHeader('Units'),
+        SurfaceCard(
+          padding: const EdgeInsets.all(Sp.x4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SegmentedControl(
+                options: [for (final s in UnitSystem.values) s.label],
+                index: UnitSystem.values.indexOf(units.system),
+                expanded: true,
+                onChanged: (i) => units.setSystem(UnitSystem.values[i]),
+              ),
+              const SizedBox(height: Sp.x2),
+              Center(
+                child: Text(
+                  units.system == UnitSystem.metric ? 'kg · cm' : 'lb · ft/in',
+                  style: AppText.captionMuted,
+                ),
+              ),
+            ],
+          ),
+        ),
 
-          const SizedBox(height: Sp.x6),
+        const SizedBox(height: Sp.x6),
 
-          // ── Automation (Tasker) ──────────────────────────────────────
-          // Android-only: TaskerReceiver + the broadcast_to_tasker capability
-          // have no iOS counterpart (same convention as _KeepAliveRow above).
-          if (Platform.isAndroid) ...[
-            const SectionHeader('Automation'),
-            _SettingsCard(rows: [
+        // ── Cycle tracking (explicit opt-in) ─────────────────────────
+        const SectionHeader('Cycle tracking'),
+        _ToggleCard(
+          icon: OsIcon.calendar,
+          iconColor: DomainAccent.cycle,
+          title: 'Track menstrual cycle',
+          subtitle:
+              'Log periods and see phase, next period & fertile window. '
+              'Off by default — nothing is computed until you turn this on.',
+          value: user['track_cycle'] == true || user['track_cycle'] == 1,
+          onChanged: (v) async {
+            try {
+              await app.updateProfile({'track_cycle': v ? 1 : 0});
+            } catch (_) {}
+          },
+        ),
+
+        const SizedBox(height: Sp.x6),
+
+        // ── Privacy (opt-in companion data — also offered at onboarding) ──
+        const SectionHeader('Privacy'),
+        _ToggleCard(
+          icon: OsIcon.info,
+          title: 'Send anonymous diagnostics',
+          subtitle:
+              'Crash/error reports plus basic device info. No health data. '
+              'On by default — switch off anytime.',
+          value: app.telemetryConsent,
+          onChanged: (v) => app.setTelemetryConsent(v),
+        ),
+        // Health-data contribution (full on-device DB upload) is a
+        // compile-time-gated feature (see kHealthDataContributionEnabled) —
+        // never offered in a store-review-facing build, only in a
+        // sideload/direct-distribution build that opted in. Hide the
+        // toggle entirely rather than leave it visible-but-inert.
+        if (kHealthDataContributionEnabled) ...[
+          const SizedBox(height: Sp.x3),
+          _ToggleCard(
+            icon: OsIcon.activity,
+            title: 'Contribute my health data',
+            subtitle:
+                'Periodically upload your on-device database (over Wi-Fi, '
+                'while charging) to improve the algorithms. On by default — '
+                'switch off anytime.',
+            value: app.healthShareConsent,
+            onChanged: (v) => app.setHealthShareConsent(v),
+          ),
+        ],
+
+        const SizedBox(height: Sp.x6),
+
+        // ── Appearance ───────────────────────────────────────────────
+        const SectionHeader('Appearance'),
+        const SurfaceCard(child: AppearanceSelector(labeled: true)),
+
+        const SizedBox(height: Sp.x6),
+
+        // ── Gestures ─────────────────────────────────────────────────
+        const SectionHeader('Gestures'),
+        const GestureSettingsCard(),
+
+        const SizedBox(height: Sp.x6),
+
+        // ── Automation (Tasker) ──────────────────────────────────────
+        // Android-only: TaskerReceiver + the broadcast_to_tasker capability
+        // have no iOS counterpart (same convention as _KeepAliveRow above).
+        if (Platform.isAndroid) ...[
+          const SectionHeader('Automation'),
+          _SettingsCard(
+            rows: [
               GestureDetector(
                 onLongPress: () async {
                   await Clipboard.setData(
-                    const ClipboardData(text: 'wtf.openstrap.openstrap_edge.BUZZ_STRAP'),
+                    const ClipboardData(
+                      text: 'wtf.openstrap.openstrap_edge.BUZZ_STRAP',
+                    ),
                   );
                   if (context.mounted) {
                     _snack(context, 'Copied BUZZ_STRAP action.');
@@ -384,21 +420,25 @@ class ProfileScreen extends StatelessWidget {
                 ),
               ),
               const _TaskerTokenRow(),
-            ]),
-            const _CardNote(
-              'Send a Broadcast intent from Tasker or any automation app to '
-              'vibrate your WHOOP strap. On Android 12+, set Package to '
-              'wtf.openstrap.openstrap_edge. Requires a String extra "token" '
-              'matching the automation token below (long-press to copy) — '
-              'without it, the strap won\'t buzz. Optional int extra '
-              '"pattern" (default 2).',
-            ),
-            const SizedBox(height: Sp.x3),
-            _SettingsCard(rows: [
+            ],
+          ),
+          const _CardNote(
+            'Send a Broadcast intent from Tasker or any automation app to '
+            'vibrate your WHOOP strap. On Android 12+, set Package to '
+            'wtf.openstrap.openstrap_edge. Requires a String extra "token" '
+            'matching the automation token below (long-press to copy) — '
+            'without it, the strap won\'t buzz. Optional int extra '
+            '"pattern" (default 2).',
+          ),
+          const SizedBox(height: Sp.x3),
+          _SettingsCard(
+            rows: [
               GestureDetector(
                 onLongPress: () async {
                   await Clipboard.setData(
-                    const ClipboardData(text: 'wtf.openstrap.openstrap_edge.DOUBLE_TAP'),
+                    const ClipboardData(
+                      text: 'wtf.openstrap.openstrap_edge.DOUBLE_TAP',
+                    ),
                   );
                   if (context.mounted) {
                     _snack(context, 'Copied DOUBLE_TAP action.');
@@ -411,128 +451,155 @@ class ProfileScreen extends StatelessWidget {
                   onTap: null,
                 ),
               ),
-            ]),
-            const _CardNote(
-              'Set double-tap gesture to "Broadcast to Tasker", then create '
-              'a Tasker profile: Event → Intent Received → action above.',
-            ),
-          ],
-          const SizedBox(height: Sp.x6),
+            ],
+          ),
+          const _CardNote(
+            'Set double-tap gesture to "Broadcast to Tasker", then create '
+            'a Tasker profile: Event → Intent Received → action above.',
+          ),
+        ],
+        const SizedBox(height: Sp.x6),
 
-          // ── Notifications ────────────────────────────────────────────
-          const SectionHeader('Notifications'),
-          _SettingsCard(rows: [
+        // ── Notifications ────────────────────────────────────────────
+        const SectionHeader('Notifications'),
+        _SettingsCard(
+          rows: [
             ListRow(
               icon: OsIcon.notifications,
               title: 'Alerts & reminders',
               value: 'Manage',
-              onTap: () => Navigator.of(
-                context,
-              ).push(themedRoute((_) => const NotificationSettingsScreen(),
-                  name: 'NotificationSettingsScreen')),
+              onTap: () => Navigator.of(context).push(
+                themedRoute(
+                  (_) => const NotificationSettingsScreen(),
+                  name: 'NotificationSettingsScreen',
+                ),
+              ),
             ),
-          ]),
-          // Notification relay (Android only — self-hides on iOS).
-          if (app.notificationRelay.supported) ...[
-            const SizedBox(height: Sp.x3),
-            const NotificationRelaySection(),
           ],
-          const SizedBox(height: Sp.x6),
+        ),
+        // Notification relay (Android only — self-hides on iOS).
+        if (app.notificationRelay.supported) ...[
+          const SizedBox(height: Sp.x3),
+          const NotificationRelaySection(),
+        ],
+        const SizedBox(height: Sp.x6),
 
-          // ── AI briefings & journaling (BYOK) ──────────────────────────
-          const SectionHeader('AI briefings & journaling'),
-          _SettingsCard(rows: [
+        // ── AI briefings & journaling (BYOK) ──────────────────────────
+        const SectionHeader('AI briefings & journaling'),
+        _SettingsCard(
+          rows: [
             ListRow(
               icon: OsIcon.ai,
               title: 'Briefings & journal',
               value: 'Manage',
-              onTap: () => Navigator.of(context).push(themedRoute(
-                  (_) => const AiSettingsScreen(), name: 'AiSettingsScreen')),
+              onTap: () => Navigator.of(context).push(
+                themedRoute(
+                  (_) => const AiSettingsScreen(),
+                  name: 'AiSettingsScreen',
+                ),
+              ),
             ),
-          ]),
-          const SizedBox(height: Sp.x6),
+          ],
+        ),
+        const SizedBox(height: Sp.x6),
 
-          // ── Community ────────────────────────────────────────────────
-          const SectionHeader('Community'),
-          SurfaceCard(
-            padding: const EdgeInsets.symmetric(
-                horizontal: Sp.x2, vertical: Sp.x2),
-            child: Row(
-              children: [
-                for (final s in _socials)
-                  Expanded(
-                    child: Pressable(
-                      borderRadius: BorderRadius.circular(R.cardSm),
-                      onTap: () => _openUrl(s.url),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: Sp.x3),
-                        child: Column(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(11),
-                              decoration: BoxDecoration(
-                                color: AppColors.surfaceAlt,
-                                shape: BoxShape.circle,
-                              ),
-                              child: AppIcon(s.icon,
-                                  size: 20, color: AppColors.ink),
+        // ── Community ────────────────────────────────────────────────
+        const SectionHeader('Community'),
+        SurfaceCard(
+          padding: const EdgeInsets.symmetric(
+            horizontal: Sp.x2,
+            vertical: Sp.x2,
+          ),
+          child: Row(
+            children: [
+              for (final s in _socials)
+                Expanded(
+                  child: Pressable(
+                    borderRadius: BorderRadius.circular(R.cardSm),
+                    onTap: () => _openUrl(s.url),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: Sp.x3),
+                      child: Column(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(11),
+                            decoration: BoxDecoration(
+                              color: AppColors.surfaceAlt,
+                              shape: BoxShape.circle,
                             ),
-                            const SizedBox(height: Sp.x2),
-                            Text(s.label, style: AppText.caption),
-                          ],
-                        ),
+                            child: AppIcon(
+                              s.icon,
+                              size: 20,
+                              color: AppColors.ink,
+                            ),
+                          ),
+                          const SizedBox(height: Sp.x2),
+                          Text(s.label, style: AppText.caption),
+                        ],
                       ),
                     ),
                   ),
-              ],
-            ),
+                ),
+            ],
           ),
-          const _CardNote(
-              'Join the community, report bugs, or peek at the source.'),
+        ),
+        const _CardNote(
+          'Join the community, report bugs, or peek at the source.',
+        ),
 
-          const SizedBox(height: Sp.x6),
+        const SizedBox(height: Sp.x6),
 
-          // ── About ────────────────────────────────────────────────────
-          const SectionHeader('About'),
-          _SettingsCard(rows: [
+        // ── About ────────────────────────────────────────────────────
+        const SectionHeader('About'),
+        _SettingsCard(
+          rows: [
             ListRow(
               icon: OsIcon.activity,
               title: 'About Edge',
               subtitle: 'Affiliation, privacy policy, licenses',
               onTap: () => Navigator.of(context).push(
-                  themedRoute((_) => const AboutScreen(), name: 'AboutScreen')),
+                themedRoute((_) => const AboutScreen(), name: 'AboutScreen'),
+              ),
             ),
-          ]),
+          ],
+        ),
 
-          const SizedBox(height: Sp.x6),
+        const SizedBox(height: Sp.x6),
 
-          // ── Reset ────────────────────────────────────────────────────
-          const SectionHeader('Reset'),
-          _SettingsCard(rows: [
+        // ── Reset ────────────────────────────────────────────────────
+        const SectionHeader('Reset'),
+        _SettingsCard(
+          rows: [
             ListRow(
               icon: OsIcon.logout,
               iconColor: AppColors.critical,
               title: 'Reset profile',
               onTap: () => _confirmSignOut(context, app),
             ),
-          ]),
+          ],
+        ),
 
-          const SizedBox(height: Sp.x6),
+        const SizedBox(height: Sp.x6),
 
-          // ── Developer ────────────────────────────────────────────────
-          const SectionHeader('Developer'),
-          _SettingsCard(rows: [
+        // ── Developer ────────────────────────────────────────────────
+        const SectionHeader('Developer'),
+        _SettingsCard(
+          rows: [
             ListRow(
               icon: OsIcon.edit,
               title: 'Design gallery',
               value: 'All components',
-              onTap: () => Navigator.of(context).push(themedRoute(
+              onTap: () => Navigator.of(context).push(
+                themedRoute(
                   (_) => const DesignGalleryScreen(),
-                  name: 'DesignGalleryScreen')),
+                  name: 'DesignGalleryScreen',
+                ),
+              ),
             ),
-          ]),
+          ],
+        ),
 
-          const SizedBox(height: 110),
+        const SizedBox(height: 110),
       ],
     );
   }
@@ -700,9 +767,9 @@ class _SettingsCard extends StatelessWidget {
   const _SettingsCard({required this.rows});
   @override
   Widget build(BuildContext context) => SurfaceCard(
-        padding: const EdgeInsets.symmetric(horizontal: Sp.x4, vertical: Sp.x1),
-        child: Column(children: rows),
-      );
+    padding: const EdgeInsets.symmetric(horizontal: Sp.x4, vertical: Sp.x1),
+    child: Column(children: rows),
+  );
 }
 
 /// A quiet caption under a card.
@@ -711,9 +778,9 @@ class _CardNote extends StatelessWidget {
   const _CardNote(this.text);
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(top: Sp.x2, left: Sp.x2),
-        child: Text(text, style: AppText.captionMuted),
-      );
+    padding: const EdgeInsets.only(top: Sp.x2, left: Sp.x2),
+    child: Text(text, style: AppText.captionMuted),
+  );
 }
 
 /// The per-install secret TaskerReceiver requires as the `token` extra on a
@@ -866,99 +933,111 @@ class _DeviceTileState extends State<DeviceTile> {
       tone: BentoTone.ink,
       padding: const EdgeInsets.all(Sp.x5),
       onTap: widget.onTap,
-      child: Builder(builder: (context) {
-        final tone = ToneScope.of(context);
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(Sp.x3),
-                  decoration: BoxDecoration(
-                    color: AppColors.nightAlt,
-                    borderRadius: BorderRadius.circular(R.chip),
-                  ),
-                  child:
-                      AppIcon(OsIcon.wear, size: 24, color: AppColors.onNight),
-                ),
-                const SizedBox(width: Sp.x4),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.name,
-                        style: AppText.h2.copyWith(color: tone.fg),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: Sp.x2),
-                      StatusChip(widget.statusText, tone: widget.statusTone),
-                    ],
-                  ),
-                ),
-                if (widget.onTap != null)
-                  AppIcon(OsIcon.arrowRight, size: 18, color: tone.fgMuted),
-              ],
-            ),
-            const SizedBox(height: Sp.x5),
-            Row(
-              children: [
-                Expanded(
-                  child: _fact(OsIcon.battery, 'Battery', widget.battery, tone),
-                ),
-                Expanded(
-                  child: _fact(OsIcon.heartRate, 'Wrist', widget.wrist, tone),
-                ),
-              ],
-            ),
-            const SizedBox(height: Sp.x4),
-            Row(
-              children: [
-                Expanded(
-                  child: _fact(OsIcon.info, 'Serial', widget.serial, tone),
-                ),
-                if (widget.onSyncNow != null)
-                  Pressable(
-                    pressedScale: 0.95,
-                    borderRadius: BorderRadius.circular(R.pill),
-                    onTap: _syncing ? null : _sync,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: Sp.x3 + 2, vertical: 7),
-                      decoration: BoxDecoration(
-                        color: AppColors.nightAlt,
-                        borderRadius: BorderRadius.circular(R.pill),
-                        border: Border.all(color: Colors.white24),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (_syncing) ...[
-                            SizedBox(
-                              width: 12,
-                              height: 12,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 1.6,
-                                color: tone.fgMuted,
-                              ),
-                            ),
-                            const SizedBox(width: Sp.x2),
-                          ],
-                          Text(
-                            _syncing ? 'Syncing…' : 'Sync now',
-                            style: AppText.caption.copyWith(color: tone.fg),
-                          ),
-                        ],
-                      ),
+      child: Builder(
+        builder: (context) {
+          final tone = ToneScope.of(context);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(Sp.x3),
+                    decoration: BoxDecoration(
+                      color: AppColors.nightAlt,
+                      borderRadius: BorderRadius.circular(R.chip),
+                    ),
+                    child: AppIcon(
+                      OsIcon.wear,
+                      size: 24,
+                      color: AppColors.onNight,
                     ),
                   ),
-              ],
-            ),
-          ],
-        );
-      }),
+                  const SizedBox(width: Sp.x4),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.name,
+                          style: AppText.h2.copyWith(color: tone.fg),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: Sp.x2),
+                        StatusChip(widget.statusText, tone: widget.statusTone),
+                      ],
+                    ),
+                  ),
+                  if (widget.onTap != null)
+                    AppIcon(OsIcon.arrowRight, size: 18, color: tone.fgMuted),
+                ],
+              ),
+              const SizedBox(height: Sp.x5),
+              Row(
+                children: [
+                  Expanded(
+                    child: _fact(
+                      OsIcon.battery,
+                      'Battery',
+                      widget.battery,
+                      tone,
+                    ),
+                  ),
+                  Expanded(
+                    child: _fact(OsIcon.heartRate, 'Wrist', widget.wrist, tone),
+                  ),
+                ],
+              ),
+              const SizedBox(height: Sp.x4),
+              Row(
+                children: [
+                  Expanded(
+                    child: _fact(OsIcon.info, 'Serial', widget.serial, tone),
+                  ),
+                  if (widget.onSyncNow != null)
+                    Pressable(
+                      pressedScale: 0.95,
+                      borderRadius: BorderRadius.circular(R.pill),
+                      onTap: _syncing ? null : _sync,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: Sp.x3 + 2,
+                          vertical: 7,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.nightAlt,
+                          borderRadius: BorderRadius.circular(R.pill),
+                          border: Border.all(color: Colors.white24),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (_syncing) ...[
+                              SizedBox(
+                                width: 12,
+                                height: 12,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 1.6,
+                                  color: tone.fgMuted,
+                                ),
+                              ),
+                              const SizedBox(width: Sp.x2),
+                            ],
+                            Text(
+                              _syncing ? 'Syncing…' : 'Sync now',
+                              style: AppText.caption.copyWith(color: tone.fg),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 
@@ -973,9 +1052,13 @@ class _DeviceTileState extends State<DeviceTile> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(label.toUpperCase(),
-                  style: AppText.overline
-                      .copyWith(fontSize: 9, color: tone.fgFaint)),
+              Text(
+                label.toUpperCase(),
+                style: AppText.overline.copyWith(
+                  fontSize: 9,
+                  color: tone.fgFaint,
+                ),
+              ),
               Text(
                 value,
                 style: AppText.title.copyWith(color: tone.fg),
@@ -1048,7 +1131,11 @@ class _HealthSection extends StatelessWidget {
                   color: AppColors.accentSoft,
                   borderRadius: BorderRadius.circular(R.chip),
                 ),
-                child: AppIcon(OsIcon.heart, size: 18, color: AppColors.onAccentSoft),
+                child: AppIcon(
+                  OsIcon.heart,
+                  size: 18,
+                  color: AppColors.onAccentSoft,
+                ),
               ),
               const SizedBox(width: Sp.x3),
               Expanded(
@@ -1231,35 +1318,39 @@ class _KeepAliveRowState extends State<_KeepAliveRow> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: Sp.x3),
-        _SettingsCard(rows: [
-          ListRow(
-            icon: OsIcon.battery,
-            title: 'Keep alive in background',
-            subtitle: 'So overnight tracking isn’t frozen by the OS',
-            value: _exempt == null ? '…' : (_exempt! ? 'On' : 'Allow'),
-            trailing: _exempt == true
-                ? AppIcon(OsIcon.check, size: 18, color: AppColors.positive)
-                : null,
-            onTap: _exempt == true
-                ? null
-                : () async {
-                    final app = context.read<AppState>();
-                    await app.requestIgnoreBatteryOptimizations();
-                    // The system dialog resolves out-of-band — re-check after a
-                    // beat so the row reflects the user's choice on return.
-                    await Future.delayed(const Duration(seconds: 1));
-                    await _refresh();
-                  },
-          ),
-          if (_showOemRow)
+        _SettingsCard(
+          rows: [
             ListRow(
               icon: OsIcon.battery,
-              title: 'Allow auto-start',
-              subtitle: 'Your phone maker needs one more step to keep '
-                  'syncing overnight — tap to open it',
-              onTap: () => context.read<AppState>().openOemAutostartSettings(),
+              title: 'Keep alive in background',
+              subtitle: 'So overnight tracking isn’t frozen by the OS',
+              value: _exempt == null ? '…' : (_exempt! ? 'On' : 'Allow'),
+              trailing: _exempt == true
+                  ? AppIcon(OsIcon.check, size: 18, color: AppColors.positive)
+                  : null,
+              onTap: _exempt == true
+                  ? null
+                  : () async {
+                      final app = context.read<AppState>();
+                      await app.requestIgnoreBatteryOptimizations();
+                      // The system dialog resolves out-of-band — re-check after a
+                      // beat so the row reflects the user's choice on return.
+                      await Future.delayed(const Duration(seconds: 1));
+                      await _refresh();
+                    },
             ),
-        ]),
+            if (_showOemRow)
+              ListRow(
+                icon: OsIcon.battery,
+                title: 'Allow auto-start',
+                subtitle:
+                    'Your phone maker needs one more step to keep '
+                    'syncing overnight — tap to open it',
+                onTap: () =>
+                    context.read<AppState>().openOemAutostartSettings(),
+              ),
+          ],
+        ),
       ],
     );
   }
@@ -1282,29 +1373,32 @@ class _ForceQuitInfoRow extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: Sp.x3),
-        _SettingsCard(rows: [
-          ListRow(
-            icon: OsIcon.battery,
-            title: 'Force-quitting pauses background sync',
-            subtitle: 'If you swipe OpenStrap away, reopen it once to resume',
-            onTap: () => showInfoSheet(
-              context,
+        _SettingsCard(
+          rows: [
+            ListRow(
+              icon: OsIcon.battery,
               title: 'Force-quitting pauses background sync',
-              body: 'Swiping OpenStrap away in the app switcher tells iOS to '
-                  'stop it completely — including background sync. This is '
-                  'an iOS rule that applies to every app, not something '
-                  'OpenStrap can change.',
-              bullets: const [
-                'Your data is never lost — the band keeps recording, and '
-                    'the next sync catches everything up.',
-                'To resume background syncing, just open OpenStrap once — '
-                    'you don\'t need to do anything else.',
-                'If you get a "hasn\'t synced in a while" notification, '
-                    'this is usually why.',
-              ],
+              subtitle: 'If you swipe OpenStrap away, reopen it once to resume',
+              onTap: () => showInfoSheet(
+                context,
+                title: 'Force-quitting pauses background sync',
+                body:
+                    'Swiping OpenStrap away in the app switcher tells iOS to '
+                    'stop it completely — including background sync. This is '
+                    'an iOS rule that applies to every app, not something '
+                    'OpenStrap can change.',
+                bullets: const [
+                  'Your data is never lost — the band keeps recording, and '
+                      'the next sync catches everything up.',
+                  'To resume background syncing, just open OpenStrap once — '
+                      'you don\'t need to do anything else.',
+                  'If you get a "hasn\'t synced in a while" notification, '
+                      'this is usually why.',
+                ],
+              ),
             ),
-          ),
-        ]),
+          ],
+        ),
       ],
     );
   }
@@ -1354,44 +1448,43 @@ class _DeviceSheet extends StatelessWidget {
         if (alarm != null)
           Padding(
             padding: const EdgeInsets.only(top: Sp.x1),
-            child: Text(
-              _alarmStatusText(live),
-              style: AppText.captionMuted,
-            ),
+            child: Text(_alarmStatusText(live), style: AppText.captionMuted),
           ),
         if (connected && alarm != null)
           Padding(
             padding: const EdgeInsets.only(top: Sp.x2),
-            child: Row(children: [
-              OutlinedButton.icon(
-                onPressed: () async {
-                  try {
-                    await live.testAlarmBuzz();
-                    if (context.mounted) _snack(context, 'Sent a test buzz.');
-                  } catch (e) {
-                    if (context.mounted) _snack(context, 'Buzz failed: $e');
-                  }
-                },
-                icon: const AppIcon(OsIcon.notifications, size: 18),
-                label: const Text('Test buzz'),
-              ),
-              const SizedBox(width: Sp.x2),
-              OutlinedButton.icon(
-                onPressed: () async {
-                  try {
-                    await live.clearAlarm();
-                    if (context.mounted) {
-                      Navigator.pop(context);
-                      _snack(context, 'Alarm cleared.');
+            child: Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    try {
+                      await live.testAlarmBuzz();
+                      if (context.mounted) _snack(context, 'Sent a test buzz.');
+                    } catch (e) {
+                      if (context.mounted) _snack(context, 'Buzz failed: $e');
                     }
-                  } catch (e) {
-                    if (context.mounted) _snack(context, 'Clear failed: $e');
-                  }
-                },
-                icon: const AppIcon(OsIcon.cancel, size: 18),
-                label: const Text('Clear alarm'),
-              ),
-            ]),
+                  },
+                  icon: const AppIcon(OsIcon.notifications, size: 18),
+                  label: const Text('Test buzz'),
+                ),
+                const SizedBox(width: Sp.x2),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    try {
+                      await live.clearAlarm();
+                      if (context.mounted) {
+                        Navigator.pop(context);
+                        _snack(context, 'Alarm cleared.');
+                      }
+                    } catch (e) {
+                      if (context.mounted) _snack(context, 'Clear failed: $e');
+                    }
+                  },
+                  icon: const AppIcon(OsIcon.cancel, size: 18),
+                  label: const Text('Clear alarm'),
+                ),
+              ],
+            ),
           ),
         if (connected) ...[
           const SizedBox(height: Sp.x2),
@@ -1418,9 +1511,7 @@ class _DeviceSheet extends StatelessWidget {
                         }
                       }
                     },
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.zero,
-                    ),
+                    style: OutlinedButton.styleFrom(padding: EdgeInsets.zero),
                     child: Text('$p', style: AppText.body),
                   ),
                 ),
@@ -1530,7 +1621,8 @@ class _DeviceSheet extends StatelessWidget {
   /// alarm state machine): confirmed ✓ / pending / soft unconfirmed warning.
   String _alarmStatusText(AppState app) {
     if (app.alarmConfirmed) return 'Alarm set ✓ — confirmed by your strap.';
-    if (app.alarmPending) return 'Setting alarm… waiting for the strap to confirm.';
+    if (app.alarmPending)
+      return 'Setting alarm… waiting for the strap to confirm.';
     return 'Alarm sent, but the strap hasn\'t confirmed it yet. '
         'Tap "Test buzz" to check it fires, and keep a backup alarm.';
   }
@@ -1658,8 +1750,10 @@ class _ProfileEditSheetState extends State<_ProfileEditSheet> {
           ],
         ),
         const SizedBox(height: Sp.x4),
-        Text('SEX (OPTIONAL)',
-            style: AppText.overline.copyWith(color: AppColors.inkMuted)),
+        Text(
+          'SEX (OPTIONAL)',
+          style: AppText.overline.copyWith(color: AppColors.inkMuted),
+        ),
         const SizedBox(height: Sp.x2),
         Wrap(
           spacing: Sp.x2,

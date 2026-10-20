@@ -20,6 +20,7 @@
 // metric_series each time.
 
 import 'dart:async';
+import 'recording_quality.dart';
 import 'dart:convert';
 import 'dart:io' show Platform;
 import 'dart:isolate';
@@ -231,7 +232,9 @@ import 'substrate.dart';
 // later in the same pass — the final day_result was always correct, only
 // this transient early read was stale. Bump so any day currently sitting
 // non-finalized re-derives with both fixes in effect.
-const int kAlgoVersion = 44;
+// v45: reject sleep windows spanning missing recordings; never substitute
+// daytime HR for sleeping RHR; distinguish recorded coverage from wear time.
+const int kAlgoVersion = 45;
 
 /// Raw is kept this many days past derivation, then pruned (derived stays).
 const int rawRetentionDays = 3;
@@ -476,7 +479,7 @@ class DerivationEngine {
   /// Run a derivation pass. [heavy]=false runs a bounded light pass over the
   /// freshness-critical day: TODAY when raw has reached today, else the latest
   /// pending day. [heavy]=true sweeps every recomputable day.
-  /// [force]=true recomputes EVERY non-finalized day regardless of the cursor.
+  /// [force]=true recomputes EVERY retained day, including finalized days.
   /// Re-entrant calls are coalesced. Returns the number of days computed.
   Future<int> run(
     Profile profile, {
@@ -508,13 +511,18 @@ class DerivationEngine {
       ..['active_days'] = <String>[]
       ..['concurrency'] = _deriveConcurrency
       ..['last_error'] = null;
-      
+
     Trace? runTrace;
     try {
       if (Firebase.apps.isNotEmpty) {
-        runTrace = FirebasePerformance.instance.newTrace('derivation_engine_run');
+        runTrace = FirebasePerformance.instance.newTrace(
+          'derivation_engine_run',
+        );
         await runTrace.start();
-        runTrace.putAttribute('mode', force ? 'force' : (heavy ? 'heavy' : 'light'));
+        runTrace.putAttribute(
+          'mode',
+          force ? 'force' : (heavy ? 'heavy' : 'light'),
+        );
       }
     } catch (_) {}
 
@@ -536,7 +544,8 @@ class DerivationEngine {
       final overrideDays = await LocalDb.sleepOverrideDays();
       final todoDays = [
         for (final day in scope.targetDays)
-          if (!finalized.contains(day) || overrideDays.contains(day)) day,
+          if (force || !finalized.contains(day) || overrideDays.contains(day))
+            day,
       ];
       if (todoDays.isEmpty) {
         _log('derive: all days finalized — nothing to do');
@@ -658,8 +667,10 @@ class DerivationEngine {
         ..['active_days'] = const <String>[]
         ..['finished_at'] = finishedAt
         ..['duration_ms'] = finishedAt - startedAt;
-      
-      try { await runTrace?.stop(); } catch (_) {}
+
+      try {
+        await runTrace?.stop();
+      } catch (_) {}
     }
   }
 
@@ -900,8 +911,9 @@ class DerivationEngine {
       try {
         final decoded = jsonDecode(raw);
         if (decoded is Map) {
-          ana.cardioUserProfile =
-              ana.SleepUserProfile.fromJson(decoded.cast<String, dynamic>());
+          ana.cardioUserProfile = ana.SleepUserProfile.fromJson(
+            decoded.cast<String, dynamic>(),
+          );
         }
       } catch (_) {
         // Cold start on unreadable payload.
@@ -919,7 +931,9 @@ class DerivationEngine {
     final base = ana.cardioUserProfile ?? const ana.SleepUserProfile();
     final updated = base.fold(main);
     await LocalDb.putBaseline(
-        'sleep_user_profile', jsonEncode(updated.toJson()));
+      'sleep_user_profile',
+      jsonEncode(updated.toJson()),
+    );
   }
 
   Future<Substrate> _loadSubstrateRange(
@@ -1431,7 +1445,8 @@ class DerivationEngine {
           final v = (diag[key] as Map?)?.cast<String, dynamic>();
           if (v == null) continue;
           summary.write(
-              ' $key=${v['value'] == true ? 'Y' : 'n'}/${v['baseline_n']}');
+            ' $key=${v['value'] == true ? 'Y' : 'n'}/${v['baseline_n']}',
+          );
         }
         summary.write(' | $note');
         TelemetryService.instance.recordNonFatal(
@@ -1477,8 +1492,10 @@ class DerivationEngine {
     try {
       final dayLo = daySub.length == 0 ? 0 : daySub.tsSec.first;
       final dayHi = daySub.length == 0 ? 0 : daySub.tsSec.last + 60;
-      final coverageWindows =
-          await LocalDb.coverageWindowsOverlapping(dayLo, dayHi);
+      final coverageWindows = await LocalDb.coverageWindowsOverlapping(
+        dayLo,
+        dayHi,
+      );
       final liveStepsReal = await LocalDb.liveStepsForDay(day.date);
       final stepCalib = await LocalDb.getStepCalibration();
       final savedSessions = await LocalDb.sessionsInRange(dayLo, dayHi);
@@ -1501,16 +1518,18 @@ class DerivationEngine {
         dayEndSec: day.endSec,
         dataNowSec: dataNowSec,
       );
-      final blocks =
-          await _runDayBlocksCancellable(blocksInput, _perDayTimeout);
+      final blocks = await _runDayBlocksCancellable(
+        blocksInput,
+        _perDayTimeout,
+      );
 
       // Merge the computed blocks back into the isolate-1 bundle. scMap is the
       // CastMap view over bundle['scalars'], so addAll writes through — nap_min /
       // hrr_bpm reach the persisted series map below.
       bundle.addAll(blocks.bundlePatch);
       (bundle['series'] as Map?)?.cast<String, dynamic>().addAll(
-            blocks.seriesPatch,
-          );
+        blocks.seriesPatch,
+      );
       scMap?.addAll(blocks.scalarPatch);
 
       // DB writes + notification the pure compute deferred to us (DB-owning isolate).
@@ -1531,7 +1550,8 @@ class DerivationEngine {
             category: NotifCategory.recovery,
             priority: NotifPriority.normal,
             title: 'Did you work out?',
-            body: 'We spotted ~${nb.durationMin} min of elevated activity. '
+            body:
+                'We spotted ~${nb.durationMin} min of elevated activity. '
                 'Tap to log it.',
             date: day.date,
             route: '/workouts',
@@ -1546,9 +1566,15 @@ class DerivationEngine {
       await _persistWakeDayFeatures(dayId: day.date, wake: blocks.wake);
     } catch (e, st) {
       secondHalfOk = false;
-      _log('day-blocks (offloaded second half) failed for ${day.date} — '
-          'persisting headline day (partial): $e');
-      TelemetryService.instance.recordNonFatal(e, st, reason: 'day_blocks_failed');
+      _log(
+        'day-blocks (offloaded second half) failed for ${day.date} — '
+        'persisting headline day (partial): $e',
+      );
+      TelemetryService.instance.recordNonFatal(
+        e,
+        st,
+        reason: 'day_blocks_failed',
+      );
     }
 
     // Finalize once the DATA EDGE has moved >48 h past the day's wake — i.e. we
@@ -1895,12 +1921,18 @@ class DerivationEngine {
         );
       }
       // 24/7 irregular-rhythm SCREEN (not a diagnosis). Fires at most once/day.
-      final irregFlag = await LocalDb.metricValueOn(date, 'irregular_rhythm_flag');
+      final irregFlag = await LocalDb.metricValueOn(
+        date,
+        'irregular_rhythm_flag',
+      );
       if (irregFlag == 1.0) {
-        await emit('irregular', 'Irregular heart rhythm — screen',
-            'Your beat-to-beat pattern looked irregular today. This is a screen, '
-            'not a diagnosis — see a clinician if you have symptoms.',
-            route: '/heart');
+        await emit(
+          'irregular',
+          'Irregular heart rhythm — screen',
+          'Your beat-to-beat pattern looked irregular today. This is a screen, '
+              'not a diagnosis — see a clinician if you have symptoms.',
+          route: '/heart',
+        );
       }
       final score = gb?['value'] is Map ? (gb!['value'] as Map)['score'] : null;
       if (score is num && score < 34) {
@@ -2268,7 +2300,8 @@ class DerivationEngine {
     final sex = profile.sex?.toLowerCase() ?? 'm'; // fallback sex
     final hrMax = 208 - 0.7 * age;
     // Fallback to 60.0 so new users (no baseline yet, no manual RHR) still get Strain
-    final rhrForTrimp = restingHr ?? profile.restingHrManual?.toDouble() ?? 60.0;
+    final rhrForTrimp =
+        restingHr ?? profile.restingHrManual?.toDouble() ?? 60.0;
     double? strain;
     double? calories;
     double? steps;
@@ -2291,13 +2324,7 @@ class DerivationEngine {
       // age/weightKg always have a value by this point (defaulted above), so
       // this used to be a dead "if (age != null && weightKg != null && ...)"
       // that flutter analyze flagged - there was never actually a gate here.
-      calories = _keytelCaloriesWake(
-        perMin,
-        age,
-        weightKg,
-        hrMax,
-        sex == 'f',
-      );
+      calories = _keytelCaloriesWake(perMin, age, weightKg, hrMax, sex == 'f');
     }
     if (motion.isNotEmpty) {
       final stepMetric = ana.dailyStepEstimate(
@@ -2358,7 +2385,11 @@ class DerivationEngine {
   }
 
   /// Active minutes over the WAKE span — a coarse 1 Hz movement proxy.
-  static int _activeMinutes(Substrate s, int sleepOnsetSec, int sleepOffsetSec) {
+  static int _activeMinutes(
+    Substrate s,
+    int sleepOnsetSec,
+    int sleepOffsetSec,
+  ) {
     final n = s.length;
     if (n < 60) return 0;
     final ang = List<double>.filled(n, 0);
@@ -2403,7 +2434,10 @@ class DerivationEngine {
     return ana.enmoSeries(samples).minutes;
   }
 
-  static List<double> _hrPerMinuteAligned(List<ana.MotionMinute> motion, Substrate s) {
+  static List<double> _hrPerMinuteAligned(
+    List<ana.MotionMinute> motion,
+    Substrate s,
+  ) {
     final buckets = <int, List<double>>{};
     for (var i = 0; i < s.hr.length && i < s.tsSec.length; i++) {
       if (s.hr[i] <= 0) continue;
@@ -2464,19 +2498,8 @@ class DerivationEngine {
     return out;
   }
 
-  /// On/off-wrist segments over the day from RECORD PRESENCE — the runs,
-  /// first/last on, longest off gap, worn minutes + time-coverage.
-  ///
-  /// Wear is whether a 1 Hz record EXISTS, not whether HR locked. The band logs
-  /// to flash only while on-wrist (off-wrist it stops and emits WRIST_OFF), so a
-  /// record means worn. The old `hr>0` rule misread normal daytime PPG drop-out
-  /// (HR only locks on a still wrist with good optical contact — mostly SLEEP)
-  /// as off-wrist, collapsing a 24 h-worn day to ~the sleep window (~7-8 h). Off
-  /// periods are now GAPS in the record stream longer than [offGapSec].
-  ///
-  /// CAVEAT: this assumes the band does NOT keep logging while off-wrist. If a
-  /// future firmware streams off-wrist records, add a skin-temp/motion on-body
-  /// gate here (the substrate carries accel + skinTemp).
+  /// Recorded segments and coverage over a full calendar day. The legacy
+  /// on/off keys describe recording presence, not inferred wrist contact.
   static Map<String, dynamic> _wearBlock(Substrate s) {
     final n = s.length;
     if (n == 0) {
@@ -2489,11 +2512,11 @@ class DerivationEngine {
         'coverage_pct': 0,
       };
     }
-    const offGapSec = 120; // a >2-min hole in the 1 Hz stream = off / not worn
+    const offGapSec = 120; // separate recorded stretches at >2-minute gaps
     final segments = <Map<String, dynamic>>[];
     final firstOn = s.tsSec.first;
     final lastOn = s.tsSec.last + 1;
-    var longestOff = 0, wornSec = 0;
+    var longestOff = 0;
     var runStart = s.tsSec.first;
     var prev = s.tsSec.first;
 
@@ -2504,7 +2527,6 @@ class DerivationEngine {
         'end': endTs,
         'len_min': ((endTs - runStart) / 60).round(),
       });
-      wornSec += endTs - runStart;
     }
 
     for (var i = 1; i < n; i++) {
@@ -2525,14 +2547,22 @@ class DerivationEngine {
     }
     closeOnRun(prev + 1);
 
-    final totalSec = s.tsSec.last - s.tsSec.first + 1;
+    final date = DateTime.fromMillisecondsSinceEpoch(s.tsSec.first * 1000);
+    final start =
+        DateTime(date.year, date.month, date.day).millisecondsSinceEpoch ~/
+        1000;
+    final end =
+        DateTime(date.year, date.month, date.day + 1).millisecondsSinceEpoch ~/
+        1000;
+    final q = recordingCoverage(s.tsSec, startSec: start, endSec: end);
     return {
       'segments': segments,
       'first_on': firstOn,
       'last_on': lastOn,
       'longest_off_min': (longestOff / 60).round(),
-      'worn_min': (wornSec / 60).round(),
-      'coverage_pct': totalSec > 0 ? (100 * wornSec / totalSec).round() : 0,
+      'worn_min': (q['recorded_min'] as num).round(),
+      'coverage_pct': (q['coverage_pct'] as num).round(),
+      'recording': q,
     };
   }
 
@@ -2542,50 +2572,8 @@ class DerivationEngine {
   /// Timeline graph. 5-min sliding window, emitted ~each minute. Inline artifact
   /// gate (plausible RR 300–2000 ms) — daytime RR is noisier/motion-confounded,
   /// so this is a context line, not the nocturnal recovery RMSSD.
-  static List<Map<String, num>> _dayHrvCurve(Substrate s) {
-    final ts = <double>[], rr = <double>[];
-    for (var i = 0; i < s.rrMs.length; i++) {
-      final v = s.rrMs[i];
-      if (v >= 300 && v <= 2000) {
-        ts.add(s.rrTsMs[i]);
-        rr.add(v);
-      }
-    }
-    if (rr.length < 10) return const [];
-    const winMs = 300000.0; // 5 min
-    final out = <Map<String, num>>[];
-    var lo = 0;
-    var lastEmit = -1e18;
-    for (var i = 0; i < rr.length; i++) {
-      while (ts[i] - ts[lo] > winMs) {
-        lo++;
-      }
-      if (i - lo >= 10) {
-        var ssd = 0.0;
-        var nd = 0;
-        for (var k = lo + 1; k <= i; k++) {
-          final d = rr[k] - rr[k - 1];
-          // Malik 20% rule: a real beat-to-beat change is small; a successive
-          // jump >20% (or >200 ms) is an ectopic/missed beat — skip that pair so
-          // one artifact doesn't blow RMSSD up to non-physiological 400+ ms.
-          if (d.abs() > 0.20 * rr[k - 1] || d.abs() > 200) continue;
-          ssd += d * d;
-          nd++;
-        }
-        if (nd >= 8 && ts[i] - lastEmit > 60000) {
-          final rmssd = math.sqrt(ssd / nd);
-          if (rmssd <= 220) {
-            out.add({
-              't': (ts[i] / 1000).round(),
-              'v': double.parse(rmssd.toStringAsFixed(1)),
-            });
-            lastEmit = ts[i];
-          }
-        }
-      }
-    }
-    return out;
-  }
+  static List<Map<String, num>> _dayHrvCurve(Substrate s) =>
+      recordedHrvWindows(s.rrTsMs, s.rrMs);
 
   /// All-day respiratory-rate curve (epoch {t,v} br/min) via rolling RSA on the
   /// 24/7 RR. 3-min window emitted ~every 5 min; absent windows (too few/too
@@ -2651,44 +2639,27 @@ class DerivationEngine {
     ];
   }
 
-  static Map<String, dynamic> _daytimeHrv(Substrate s, int onsetSec, int offsetSec) {
-    const binSec = 300;
-    final bins = <int, List<double>>{};
-    double? prev;
-    for (var k = 0; k < s.rrMs.length; k++) {
-      final tSec = s.rrTsMs[k] ~/ 1000;
-      if (offsetSec > onsetSec && tSec >= onsetSec && tSec < offsetSec) {
-        prev = null;
-        continue; // skip the sleep window
-      }
-      final v = s.rrMs[k];
-      if (v < 300 || v > 2000) {
-        prev = null;
-        continue;
-      }
-      if (prev != null) {
-        final d = v - prev;
-        if (d.abs() <= 200) (bins[tSec ~/ binSec] ??= <double>[]).add(d * d);
-      }
-      prev = v;
-    }
-    final timeline = <Map<String, dynamic>>[];
-    final means = <double>[];
-    final keys = bins.keys.toList()..sort();
-    for (final b in keys) {
-      final sq = bins[b]!;
-      if (sq.length < 5) continue;
-      final rmssd = math.sqrt(sq.reduce((a, c) => a + c) / sq.length);
-      timeline.add({'t': b * binSec, 'rmssd': (rmssd * 10).round() / 10.0});
-      means.add(rmssd);
-    }
-    final mean = means.isEmpty
-        ? null
-        : means.reduce((a, c) => a + c) / means.length;
+  static Map<String, dynamic> _daytimeHrv(
+    Substrate s,
+    int onsetSec,
+    int offsetSec,
+  ) {
+    final windows = recordedHrvWindows(s.rrTsMs, s.rrMs).where((w) {
+      final t = w['t']!.toInt();
+      return offsetSec <= onsetSec || t + 300 <= onsetSec || t >= offsetSec;
+    }).toList();
+    final values = [for (final w in windows) w['v']!.toDouble()];
     return {
-      'timeline': timeline,
-      'mean_rmssd': mean == null ? null : (mean * 10).round() / 10.0,
-      'n_buckets': timeline.length,
+      'timeline': [
+        for (final w in windows) {'t': w['t'], 'rmssd': w['v']},
+      ],
+      'mean_rmssd': values.isEmpty
+          ? null
+          : values.reduce((a, b) => a + b) / values.length,
+      'min_rmssd': values.isEmpty ? null : values.reduce(math.min),
+      'max_rmssd': values.isEmpty ? null : values.reduce(math.max),
+      'n_buckets': windows.length,
+      'recorded_min': windows.length * 5,
     };
   }
 
@@ -2738,7 +2709,11 @@ class DerivationEngine {
 
   /// Sleep periods: the main sleep + any NAPS (still, on-wrist minute-runs ≥20
   /// min OUTSIDE the main window). Conservative — naps need sustained stillness.
-  static Map<String, dynamic> _sleepPeriods(Substrate s, int onsetSec, int offsetSec) {
+  static Map<String, dynamic> _sleepPeriods(
+    Substrate s,
+    int onsetSec,
+    int offsetSec,
+  ) {
     final periods = <Map<String, dynamic>>[];
     var totalAsleep = 0;
     if (offsetSec > onsetSec) {
@@ -3060,7 +3035,9 @@ class DerivationEngine {
       }
     }
 
-    scMap.remove('rhr'); // seed only; the real rhr scalar already lives in the bundle
+    scMap.remove(
+      'rhr',
+    ); // seed only; the real rhr scalar already lives in the bundle
     return _DayBlocksOutput(
       bundlePatch: bundlePatch,
       seriesPatch: seriesPatch,
@@ -3102,8 +3079,12 @@ class DerivationEngine {
         }
       }
       if (hrBpm.length < 60) return const _WorkoutCompute.empty();
-      final motion =
-          ana.AutoWorkoutDetector.motionPoints(s.tsSec, s.ax, s.ay, s.az);
+      final motion = ana.AutoWorkoutDetector.motionPoints(
+        s.tsSec,
+        s.ax,
+        s.ay,
+        s.az,
+      );
       // Exclude windows the user has already logged (manual/live wins).
       final savedSpans = <ana.SavedWorkoutSpan>[
         for (final r in saved)
@@ -3117,15 +3098,17 @@ class DerivationEngine {
       // entirely (HRR for already-saved sessions below still runs).
       final bouts = rhr == null
           ? const <ana.DetectedWorkout>[]
-          : (ana.autoDetectWorkouts(
-                hrTs: hrTs,
-                hrBpm: hrBpm,
-                restingBpm: rhr,
-                maxBpm: maxHr,
-                motion: motion,
-                savedSpans: savedSpans,
-              ).value ??
-              const <ana.DetectedWorkout>[]);
+          : (ana
+                    .autoDetectWorkouts(
+                      hrTs: hrTs,
+                      hrBpm: hrBpm,
+                      restingBpm: rhr,
+                      maxBpm: maxHr,
+                      motion: motion,
+                      savedSpans: savedSpans,
+                    )
+                    .value ??
+                const <ana.DetectedWorkout>[]);
 
       // HRR per bout from the per-second HR tail bracketing each bout end.
       final drops = <double>[];
@@ -3160,7 +3143,8 @@ class DerivationEngine {
       final hrrBpm = drops.isEmpty
           ? null
           : double.parse(
-              (drops.reduce((a, c) => a + c) / drops.length).toStringAsFixed(1));
+              (drops.reduce((a, c) => a + c) / drops.length).toStringAsFixed(1),
+            );
 
       // Persist + notify only for RECENT days (≤ ~36 h old) so imports/re-analyze
       // don't resurface 90 days of prompts.
@@ -3199,7 +3183,8 @@ class DerivationEngine {
         notifBout: notif,
       );
     } catch (e) {
-      if (kDebugMode) debugPrint('[derive] auto-workout/HRR FAILED/skipped: $e');
+      if (kDebugMode)
+        debugPrint('[derive] auto-workout/HRR FAILED/skipped: $e');
       return const _WorkoutCompute.empty();
     }
   }
@@ -3241,7 +3226,7 @@ class DerivationEngine {
       final epoch = <ana.AccelSample>[
         for (var i = 0; i < s.length; i++)
           if (s.tsSec[i] >= onsetSec && s.tsSec[i] < offsetSec)
-            ana.AccelSample(s.tsSec[i] * 1000.0, s.ax[i], s.ay[i], s.az[i])
+            ana.AccelSample(s.tsSec[i] * 1000.0, s.ax[i], s.ay[i], s.az[i]),
       ];
       if (epoch.length < 60) return;
       final tilts = ana.positionSeries(epoch, epochSec: 30);
@@ -3270,12 +3255,14 @@ class DerivationEngine {
         'epochs': tilts.length,
         'confidence': 'low',
         'tier': ana.Tier.relative,
-        'note': 'WRIST orientation during sleep (gravity-tilt). A body-position '
+        'note':
+            'WRIST orientation during sleep (gravity-tilt). A body-position '
             'PROXY, NOT supine/side/prone body position — the wrist moves '
             'independently of the torso.',
       };
     } catch (e) {
-      if (kDebugMode) debugPrint('[derive] wrist-orientation FAILED/skipped: $e');
+      if (kDebugMode)
+        debugPrint('[derive] wrist-orientation FAILED/skipped: $e');
     }
   }
 
@@ -3395,11 +3382,11 @@ class _WorkoutCompute {
     required this.notifBout,
   });
   const _WorkoutCompute.empty()
-      : boutJson = const [],
-        hrrBpm = null,
-        sessionHrrWrites = const [],
-        suggestionsToPersist = const [],
-        notifBout = null;
+    : boutJson = const [],
+      hrrBpm = null,
+      sessionHrrWrites = const [],
+      suggestionsToPersist = const [],
+      notifBout = null;
 }
 
 double? _median(List<double> xs) {

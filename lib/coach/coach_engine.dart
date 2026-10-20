@@ -1,4 +1,4 @@
-// CoachEngine — the agentic core. Talks to an OpenAI-compatible provider directly
+// CoachEngine — the agentic core. Talks to Anthropic or a compatible provider directly
 // (BYOK), runs a tool-calling loop over read-only data tools + a plot tool + action
 // tools (writes require user confirmation), and streams items back to the UI.
 //
@@ -12,6 +12,7 @@
 // itself still uses `http` directly (BYOK, the user's own provider — not our backend).
 
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 import 'package:http/http.dart' as http;
@@ -22,6 +23,7 @@ import '../data/local_repository.dart';
 import 'coach_config.dart';
 import 'coach_db.dart';
 import 'coach_prompt.dart';
+import 'anthropic_messages.dart';
 
 // ── value types ──────────────────────────────────────────────────────────────
 
@@ -161,7 +163,7 @@ class CoachEngine {
   final CoachConfig config;
   final LocalRepository api;
   final String storageKey; // per-user, so accounts don't share a transcript
-  final http.Client _http = http.Client();
+  final http.Client _http;
 
   // OpenAI-format running history (system is added per-request) — the context we
   // resend every turn so the model remembers the conversation.
@@ -189,7 +191,8 @@ class CoachEngine {
     'Pulling the thread…',
   ];
 
-  CoachEngine({required this.config, required this.api, this.storageKey = 'anon'});
+  CoachEngine({required this.config, required this.api, this.storageKey = 'anon',
+    http.Client? client}) : _http = client ?? http.Client();
 
   void reset() { _history.clear(); transcript.clear(); }
   bool get hasHistory => _history.isNotEmpty;
@@ -263,7 +266,13 @@ class CoachEngine {
     final now = DateTime.now().millisecondsSinceEpoch;
     if (_createdAt == 0) _createdAt = now;
     if (_title.isEmpty) _title = _deriveTitle();
-    if (_history.length > 60) _history.removeRange(0, _history.length - 60);
+    if (_history.length > 60) {
+      // Keep complete turns: starting on a tool result loses its required
+      // preceding assistant tool call and Anthropic rejects the next request.
+      final start = _history.indexWhere(
+          (m) => m['role'] == 'user', _history.length - 60);
+      if (start > 0) _history.removeRange(0, start);
+    }
     try {
       final f = await _sessionFile(_sessionId);
       await f.writeAsString(jsonEncode({
@@ -323,39 +332,32 @@ class CoachEngine {
     return '';
   }
 
-  /// True when [base]'s host is anthropic.com or one of its subdomains. A
-  /// domain-boundary check, not endsWith('anthropic.com'), so a lookalike
-  /// host (evil-anthropic.com) never receives the key in Anthropic headers.
-  static bool _isAnthropicHost(String base) {
-    final host = (Uri.tryParse(base)?.host ?? '').toLowerCase();
-    return host == 'anthropic.com' || host.endsWith('.anthropic.com');
-  }
-
   /// Live model list from the provider's /models endpoint (OpenAI-compatible).
   /// Static so Settings can probe an as-yet-unsaved base URL + key.
-  static Future<List<String>> fetchModels(String apiBase, String apiKey) async {
-    var b = apiBase.trim();
-    while (b.endsWith('/')) {
-      b = b.substring(0, b.length - 1);
-    }
+  static Future<List<String>> fetchModels(String apiBase, String apiKey,
+      {http.Client? client}) async {
+    final b = CoachConfig.normalizeBase(apiBase);
     // Anthropic's native Models API authenticates with x-api-key +
     // anthropic-version (a bearer token is rejected) and paginates with
     // has_more/last_id, but its response shape (data[].id) matches OpenAI's.
-    final isAnthropic = _isAnthropicHost(b);
+    final isAnthropic = CoachConfig.providerForBase(b) == CoachProvider.anthropic;
     final ids = <String>[];
     String? after;
+    final seenPages = <String>{};
+    final c = client ?? http.Client();
+    try {
     do {
-      final uri = Uri.parse(isAnthropic
-          ? '$b/models?limit=1000${after == null ? '' : '&after_id=$after'}'
-          : '$b/models');
-      final resp = await http.get(
+      final uri = Uri.parse('$b/models').replace(queryParameters: isAnthropic
+          ? {'limit': '1000', 'after_id': ?after}
+          : null);
+      final resp = await c.get(
         uri,
         headers: isAnthropic
             ? {'x-api-key': apiKey, 'anthropic-version': '2023-06-01'}
             : {'Authorization': 'Bearer $apiKey'},
       ).timeout(const Duration(seconds: 20));
       if (resp.statusCode != 200) {
-        throw CoachException('Models request failed (${resp.statusCode}): ${_short(resp.body)}');
+        throw _providerError(resp, apiKey);
       }
       final j = jsonDecode(resp.body);
       final data = (j['data'] as List?) ?? const [];
@@ -363,12 +365,18 @@ class CoachEngine {
           .map((e) => (e as Map)['id']?.toString() ?? '')
           .where((s) => s.isNotEmpty));
       after = (isAnthropic && j['has_more'] == true) ? j['last_id']?.toString() : null;
+      if (after != null && !seenPages.add(after)) {
+        throw CoachException('Provider returned a repeated model page. Try again.');
+      }
     } while (after != null);
+    } on TimeoutException {
+      throw CoachException('The provider did not respond in time. Check your connection and try again.');
+    } finally {
+      if (client == null) c.close();
+    }
     ids.sort();
-    return ids;
+    return ids.toSet().toList();
   }
-
-  static String _short(String s) => s.length > 200 ? s.substring(0, 200) : s;
 
   // LOCAL day label — the coach's SQL views (v_daily/v_metric/…) are keyed by
   // the device-local dates the derivation engine files days under, so "today"
@@ -403,14 +411,20 @@ class CoachEngine {
 
       if (toolCalls.isEmpty) {
         if (content != null && content.isNotEmpty) _emitAssistantText(content, emit);
-        _history.add({'role': 'assistant', 'content': content ?? ''});
+        _history.add({'role': 'assistant', 'content': content ?? '',
+          if (reply[AnthropicMessages.nativeContentKey] != null)
+            AnthropicMessages.nativeContentKey: reply[AnthropicMessages.nativeContentKey],
+        });
         onStatus(null);
         return;
       }
 
       // Assistant turn that requested tools (echo any interim text).
       if (content != null && content.isNotEmpty) _emitAssistantText(content, emit);
-      _history.add({'role': 'assistant', 'content': content ?? '', 'tool_calls': toolCalls});
+      _history.add({'role': 'assistant', 'content': content ?? '', 'tool_calls': toolCalls,
+        if (reply[AnthropicMessages.nativeContentKey] != null)
+          AnthropicMessages.nativeContentKey: reply[AnthropicMessages.nativeContentKey],
+      });
 
       for (final tcRaw in toolCalls) {
         final tc = tcRaw as Map;
@@ -513,7 +527,7 @@ class CoachEngine {
     return major >= 5; // sonnet, haiku
   }
 
-  /// THE one OpenAI-compatible chat-completions POST. Every LLM call in the app
+  /// Shared provider POST. Every LLM call in the app
   /// (the coach tool loop, the daily briefings, the journal chat) goes through
   /// here so there is exactly ONE provider client + error contract. Returns the
   /// first choice's `message` map. Throws [CoachException] on any provider error.
@@ -522,6 +536,9 @@ class CoachEngine {
     Map<String, dynamic> body, {
     http.Client? client,
   }) async {
+    if (config.apiKey?.trim().isNotEmpty != true) {
+      throw CoachException('Add your API key in AI Coach settings first.');
+    }
     final c = client ?? http.Client();
     // Recent Claude models reject sampling params with a 400, on Anthropic's
     // own endpoint and through any pass-through provider alike. Strip them for
@@ -534,24 +551,45 @@ class CoachEngine {
         ..remove('top_k');
     }
     try {
+      final native = config.provider == CoachProvider.anthropic;
+      final payload = native
+          ? AnthropicMessages.request(body)
+          : AnthropicMessages.openAiRequest(body);
       final resp = await c
           .post(
-            Uri.parse('${config.apiBase}/chat/completions'),
+            Uri.parse('${config.apiBase}/${native ? 'messages' : 'chat/completions'}'),
             headers: {
-              'Authorization': 'Bearer ${config.apiKey}',
+              if (native) ...{
+                'x-api-key': config.apiKey!,
+                'anthropic-version': '2023-06-01',
+              } else 'Authorization': 'Bearer ${config.apiKey}',
               'content-type': 'application/json',
             },
-            body: jsonEncode(body),
+            body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 120));
       if (resp.statusCode != 200) {
-        throw CoachException(
-            'Provider error (${resp.statusCode}): ${_briefErr(resp.body)}');
+        throw _providerError(resp, config.apiKey!);
       }
-      final j = jsonDecode(utf8.decode(resp.bodyBytes));
+      final j = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+      if (native) {
+        if (j['stop_reason'] == 'max_tokens') {
+          throw CoachException('Claude reached its response limit. Try a narrower question or choose another model.');
+        }
+        final message = AnthropicMessages.response(j);
+        if ((message['content'] as String).isEmpty &&
+            (message['tool_calls'] as List).isEmpty) {
+          throw CoachException('Claude returned no answer. Try again or choose another model.');
+        }
+        return message;
+      }
       final choices = (j['choices'] as List?) ?? const [];
       if (choices.isEmpty) throw CoachException('Empty response from provider.');
       return (choices.first as Map)['message'] as Map<String, dynamic>;
+    } on TimeoutException {
+      throw CoachException('The provider did not respond in time. Check your connection and try again.');
+    } on FormatException {
+      throw CoachException('The provider returned an unreadable response. Check your model and provider settings.');
     } finally {
       if (client == null) c.close();
     }
@@ -563,12 +601,13 @@ class CoachEngine {
     required CoachConfig config,
     required List<Map<String, dynamic>> messages,
     double temperature = 0.4,
+    http.Client? client,
   }) async {
     final msg = await postChat(config, {
       'model': config.model,
       'messages': messages,
       'temperature': temperature,
-    });
+    }, client: client);
     return ((msg['content'] as String?) ?? '').trim();
   }
 
@@ -591,6 +630,21 @@ class CoachEngine {
     } catch (_) {
       return body.length > 300 ? body.substring(0, 300) : body;
     }
+  }
+
+  static CoachException _providerError(http.Response response, String apiKey) {
+    final advice = switch (response.statusCode) {
+      401 => 'The API key was rejected. Check the key and selected provider.',
+      403 => 'This key does not have access. Check its provider permissions.',
+      404 => 'The model or endpoint was not found. Fetch the available models in AI Coach settings.',
+      429 => 'The provider has reached a usage or rate limit. Check your API balance and retry later.',
+      529 => 'Claude is temporarily busy. Please try again shortly.',
+      _ => 'Provider request failed.',
+    };
+    var detail = _briefErr(response.body);
+    if (apiKey.isNotEmpty) detail = detail.replaceAll(apiKey, '[redacted]');
+    if (detail.length > 300) detail = '${detail.substring(0, 300)}…';
+    return CoachException('$advice (${response.statusCode}) $detail');
   }
 
   // ── tool execution ───────────────────────────────────────────────────────────

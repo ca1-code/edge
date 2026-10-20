@@ -58,13 +58,13 @@ class Briefing {
   });
 
   Map<String, dynamic> toJson() => {
-        'day': day,
-        'period': period.id,
-        'one_liner': oneLiner,
-        'breakdown_md': breakdownMd,
-        'generated_at_ms': generatedAtMs,
-        'inputs': inputs,
-      };
+    'day': day,
+    'period': period.id,
+    'one_liner': oneLiner,
+    'breakdown_md': breakdownMd,
+    'generated_at_ms': generatedAtMs,
+    'inputs': inputs,
+  };
 
   static Briefing? fromJson(dynamic j) {
     if (j is! Map) return null;
@@ -90,7 +90,7 @@ class Briefing {
 class BriefingStore {
   BriefingStore._();
 
-  static String _slotKey(BriefingPeriod p) => 'ai.briefing.${p.id}';
+  static String _slotKey(BriefingPeriod p) => 'ai.briefing.v45.${p.id}';
   static const String _kJournalDoneDay = 'ai.journal_done_day';
 
   /// Synchronous read of the cached briefing for [period]. Returns null when

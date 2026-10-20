@@ -34,6 +34,7 @@ class CoachDb {
   static const Set<String> allowedViews = {
     'v_metric',
     'v_daily',
+    'v_recording',
     'v_series',
     'v_hypnogram',
     'v_sessions',
@@ -44,20 +45,60 @@ class CoachDb {
   // Keywords that must never appear as standalone tokens (anything mutating or
   // schema-touching). SELECT/WITH/FROM/JOIN/WHERE/etc. are fine and not listed.
   static const Set<String> _banned = {
-    'insert', 'update', 'delete', 'drop', 'alter', 'create', 'replace',
-    'truncate', 'attach', 'detach', 'pragma', 'vacuum', 'reindex', 'analyze',
-    'begin', 'commit', 'rollback', 'savepoint', 'grant', 'revoke', 'trigger',
-    'into', 'load_extension',
+    'insert',
+    'update',
+    'delete',
+    'drop',
+    'alter',
+    'create',
+    'replace',
+    'truncate',
+    'attach',
+    'detach',
+    'pragma',
+    'vacuum',
+    'reindex',
+    'analyze',
+    'begin',
+    'commit',
+    'rollback',
+    'savepoint',
+    'grant',
+    'revoke',
+    'trigger',
+    'into',
+    'load_extension',
   };
 
   // Base/raw table names that must NOT appear anywhere (force the views).
   static const Set<String> _denyTables = {
-    'raw_records', 'decoded_onehz', 'decoded_rr', 'samples', 'sqlite_master',
-    'day_result', 'metric_series', 'baselines', 'sessions', 'notifications',
-    'derived_day', 'events', 'band_events', 'band_battery', 'live_coverage',
-    'sync_ledger', 'sync_quarantine', 'sync_cursor', 'compute_jobs',
-    'compute_freshness', 'journal', 'cycle_log', 'cycle_symptom',
-    'primitive_artifacts', 'wake_day_features', 'workout_suggestions',
+    'live_hr',
+    'raw_records',
+    'decoded_onehz',
+    'decoded_rr',
+    'samples',
+    'sqlite_master',
+    'day_result',
+    'metric_series',
+    'baselines',
+    'sessions',
+    'notifications',
+    'derived_day',
+    'events',
+    'band_events',
+    'band_battery',
+    'live_coverage',
+    'sync_ledger',
+    'sync_quarantine',
+    'sync_cursor',
+    'compute_jobs',
+    'compute_freshness',
+    'journal',
+    'cycle_log',
+    'cycle_symptom',
+    'primitive_artifacts',
+    'wake_day_features',
+    'workout_suggestions',
   };
 
   static Database? _ro;
@@ -98,24 +139,26 @@ class CoachDb {
       throw SqlGuardError('Query must start with SELECT or WITH.');
     }
     // (d) Tokenize; reject any banned keyword + collect identifiers.
-    final tokens = RegExp(r'[A-Za-z_][A-Za-z0-9_]*')
-        .allMatches(lower)
-        .map((m) => m.group(0)!)
-        .toList();
+    final tokens = RegExp(
+      r'[A-Za-z_][A-Za-z0-9_]*',
+    ).allMatches(lower).map((m) => m.group(0)!).toList();
     for (final t in tokens) {
       if (_banned.contains(t)) throw SqlGuardError('Disallowed keyword: $t');
       if (_denyTables.contains(t)) throw SqlGuardError('Table not allowed: $t');
     }
     // (e) CTE names declared via WITH … AS ( become valid FROM targets.
     final cte = <String>{};
-    for (final m in RegExp(r'(?:with|,)\s+([A-Za-z_][A-Za-z0-9_]*)\s+as\s*\(',
-            caseSensitive: false)
-        .allMatches(lower)) {
+    for (final m in RegExp(
+      r'(?:with|,)\s+([A-Za-z_][A-Za-z0-9_]*)\s+as\s*\(',
+      caseSensitive: false,
+    ).allMatches(lower)) {
       cte.add(m.group(1)!);
     }
     // (f) Every FROM/JOIN target must be an allowed view (or a CTE name).
-    final refRe = RegExp(r'\b(?:from|join)\s+("?)([A-Za-z_][A-Za-z0-9_.]*)\1',
-        caseSensitive: false);
+    final refRe = RegExp(
+      r'\b(?:from|join)\s+("?)([A-Za-z_][A-Za-z0-9_.]*)\1',
+      caseSensitive: false,
+    );
     final refs = <String>[];
     for (final m in refRe.allMatches(lower)) {
       final id = m.group(2)!;
@@ -128,7 +171,8 @@ class CoachDb {
     for (final r in refs) {
       if (!allowedViews.contains(r) && !cte.contains(r)) {
         throw SqlGuardError(
-            'Table "$r" is not queryable. Allowed views: ${allowedViews.join(', ')}.');
+          'Table "$r" is not queryable. Allowed views: ${allowedViews.join(', ')}.',
+        );
       }
     }
     // (g) Auto-append a LIMIT to protect context.
@@ -157,7 +201,8 @@ class CoachDb {
         'row_count': shown.length,
       };
       if (rows.length > rowCap) {
-        out['note'] = 'Truncated to $rowCap of ${rows.length}+ rows. Add a '
+        out['note'] =
+            'Truncated to $rowCap of ${rows.length}+ rows. Add a '
             'tighter WHERE or aggregate (AVG/MIN/MAX/COUNT) instead of selecting '
             'all rows.';
       }

@@ -43,8 +43,11 @@ String _today() {
 /// A representative /trend payload (week scale, one empty day).
 Map<String, dynamic> _sampleTrend() {
   final now = DateTime.now().toUtc();
-  final monday = DateTime.utc(now.year, now.month, now.day)
-      .subtract(Duration(days: now.weekday - 1));
+  final monday = DateTime.utc(
+    now.year,
+    now.month,
+    now.day,
+  ).subtract(Duration(days: now.weekday - 1));
   return {
     'label': 'Resting HR',
     'unit': 'bpm',
@@ -52,7 +55,8 @@ Map<String, dynamic> _sampleTrend() {
     'buckets': [
       for (var i = 0; i < 7; i++)
         {
-          't_start': monday.add(Duration(days: i)).millisecondsSinceEpoch ~/ 1000,
+          't_start':
+              monday.add(Duration(days: i)).millisecondsSinceEpoch ~/ 1000,
           't_end':
               monday.add(Duration(days: i + 1)).millisecondsSinceEpoch ~/ 1000,
           'value': i == 3 ? 0 : 50 + i,
@@ -63,6 +67,18 @@ Map<String, dynamic> _sampleTrend() {
 }
 
 Map<String, dynamic> _sampleHeartDay() => {
+  'recording': {
+    'recorded_seconds': 7200,
+    'recorded_min': 120,
+    'coverage_pct': 8.33,
+    'live_seconds': 60,
+  },
+  'daytime_hrv': {
+    'mean_rmssd': 42,
+    'min_rmssd': 31,
+    'max_rmssd': 53,
+    'n_buckets': 6,
+  },
   'resting_hr': 52,
   'resting_hr_baseline': 54.0,
   'recovery': 78,
@@ -94,7 +110,8 @@ Map<String, dynamic> _sampleHeartDay() => {
   'hr': [
     for (var i = 0; i < 24; i++)
       {
-        't': DateTime.now()
+        't':
+            DateTime.now()
                 .subtract(Duration(hours: 24 - i))
                 .millisecondsSinceEpoch ~/
             1000,
@@ -246,8 +263,10 @@ void main() {
       _phone(t, height: 4200);
       for (final p in [kLightPalette, kDarkPalette]) {
         await t.pumpWidget(
-          _host(HeartDayContent(data: _sampleHeartDay(), date: _today()),
-              palette: p),
+          _host(
+            HeartDayContent(data: _sampleHeartDay(), date: _today()),
+            palette: p,
+          ),
         );
         await t.pump(const Duration(milliseconds: 1200));
         // Recovery hero BigStat figure.
@@ -258,6 +277,11 @@ void main() {
         expect(find.text('48'), findsWidgets); // HRV rmssd
         expect(find.text('47'), findsWidgets); // sleeping HR
         expect(find.text('dip 12%'), findsOneWidget);
+        expect(find.text('Recorded 2h 0m · 8% coverage'), findsOneWidget);
+        expect(
+          find.text('Average 42 ms · low 31 · high 53 ms'),
+          findsOneWidget,
+        );
         // Honest watches present.
         expect(find.text('All clear'), findsOneWidget);
         expect(find.text('Rhythm looks regular'), findsOneWidget);
@@ -271,14 +295,9 @@ void main() {
     ) async {
       _phone(t, height: 4200);
       final d = _sampleHeartDay();
-      d['illness'] = {
-        'state': 'green',
-        'note': 'need_baseline:have=3,need=7',
-      };
+      d['illness'] = {'state': 'green', 'note': 'need_baseline:have=3,need=7'};
       d['irregular'] = {'confidence': 0};
-      await t.pumpWidget(
-        _host(HeartDayContent(data: d, date: _today())),
-      );
+      await t.pumpWidget(_host(HeartDayContent(data: d, date: _today())));
       await t.pump(const Duration(milliseconds: 1000));
       expect(find.text('Need 4 more nights'), findsOneWidget);
       expect(find.text('Listening for your rhythm'), findsOneWidget);
@@ -293,14 +312,16 @@ void main() {
       _phone(t, height: 2400);
       for (final p in [kLightPalette, kDarkPalette]) {
         await t.pumpWidget(
-          _host(WearDayContent(data: _sampleWearDay(), date: _today()),
-              palette: p),
+          _host(
+            WearDayContent(data: _sampleWearDay(), date: _today()),
+            palette: p,
+          ),
         );
         await t.pump(const Duration(milliseconds: 900));
         expect(find.text('21h 30m'), findsOneWidget);
         expect(find.text('90% of the day'), findsOneWidget);
         expect(find.text('90%'), findsWidgets); // gauge value
-        expect(find.text('WEAR STRETCHES'), findsOneWidget);
+        expect(find.text('RECORDED STRETCHES'), findsOneWidget);
         expect(find.text('2'), findsWidgets);
         expect(find.text('0h 40m'), findsWidgets); // longest off
         expect(t.takeException(), isNull);
@@ -313,7 +334,7 @@ void main() {
         _host(WearDayContent(data: const {'worn_min': 0}, date: _today())),
       );
       await t.pump(const Duration(milliseconds: 500));
-      expect(find.text('Not worn on this day'), findsOneWidget);
+      expect(find.text('No recording for this day'), findsOneWidget);
       expect(t.takeException(), isNull);
     });
   });
@@ -325,8 +346,10 @@ void main() {
       _phone(t, height: 3600);
       for (final p in [kLightPalette, kDarkPalette]) {
         await t.pumpWidget(
-          _host(OxygenNightContent(data: _sampleOxygenNight(), date: _today()),
-              palette: p),
+          _host(
+            OxygenNightContent(data: _sampleOxygenNight(), date: _today()),
+            palette: p,
+          ),
         );
         await t.pump(const Duration(milliseconds: 1200));
         expect(find.text('2.1'), findsWidgets); // ODI hero
@@ -382,8 +405,10 @@ void main() {
       _phone(t, height: 3200);
       for (final p in [kLightPalette, kDarkPalette]) {
         await t.pumpWidget(
-          _host(StressDayContent(data: _sampleStressDay(), date: _today()),
-              palette: p),
+          _host(
+            StressDayContent(data: _sampleStressDay(), date: _today()),
+            palette: p,
+          ),
         );
         await t.pump(const Duration(milliseconds: 1200));
         expect(find.text('34'), findsWidgets); // score in the gauge

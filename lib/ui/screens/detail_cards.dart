@@ -12,6 +12,7 @@ import '../../models/metric.dart'
     show needMoreNightsFromNote, needMessageFromNote;
 import '../../state/app_state.dart';
 import '../design/design.dart';
+import '../widgets/recording_notice.dart';
 import 'metric_row.dart';
 import 'trend_screen.dart';
 
@@ -133,9 +134,7 @@ class _FetchState extends State<_Fetch> {
       );
     }
     if (_d == null) {
-      return SurfaceCard(
-        child: Text('No data', style: AppText.captionMuted),
-      );
+      return SurfaceCard(child: Text('No data', style: AppText.captionMuted));
     }
     return widget.build(_d!);
   }
@@ -247,6 +246,7 @@ class HeartDayContent extends StatelessWidget {
     final rhrBase = _n(d['resting_hr_baseline']);
     final rec = _n(d['recovery']);
     final hrv = (d['hrv'] as Map?);
+    final daytimeHrv = d['daytime_hrv'] as Map?;
     final zones = (d['zones'] as Map?);
     final noct = (d['nocturnal'] as Map?);
     final illness = (d['illness'] as Map?);
@@ -263,8 +263,8 @@ class HeartDayContent extends StatelessWidget {
     // actually sets that key - it was permanently dead code, removed rather
     // than force-fitting a fake driver split just to have something to show.
     final latest = hr.isEmpty ? null : hr.last;
-    final peak = hr.isEmpty ? null : hr.reduce((a, b) => a.y >= b.y ? a : b);
-    final low = hr.isEmpty ? null : hr.reduce((a, b) => a.y <= b.y ? a : b);
+    final peak = _n(d['max_hr']);
+    final low = _n(d['min_hr']);
     final sleepingHr = _n(noct?['sleeping_hr_avg']);
     final dipPct = _n(noct?['dip_pct']);
 
@@ -272,6 +272,15 @@ class HeartDayContent extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // ── hero: the anatomical heart beside the day's headline figure ─────
+        RecordingNotice(recording: d['recording'] as Map?),
+        if (d['avg_hr'] is num)
+          Padding(
+            padding: const EdgeInsets.only(bottom: Sp.x4),
+            child: Text(
+              'Recorded HR · average ${d['avg_hr']} · low ${low ?? '—'} · high ${peak ?? '—'} bpm',
+              style: AppText.body,
+            ),
+          ),
         SurfaceCard(
           padding: const EdgeInsets.all(Sp.x5),
           child: Column(
@@ -298,9 +307,7 @@ class HeartDayContent extends StatelessWidget {
                       caption: 'HRV-based recovery',
                       captionAccent: true,
                       size: BigStatSize.xl,
-                      color: AppColors.scoreColor(
-                        (rec / 100).clamp(0.0, 1.0),
-                      ),
+                      color: AppColors.scoreColor((rec / 100).clamp(0.0, 1.0)),
                     )
                   : BigStat(
                       value: rhr == null ? null : '${rhr.round()}',
@@ -325,20 +332,20 @@ class HeartDayContent extends StatelessWidget {
               accent: DomainAccent.recovery,
               onTap: hrv == null
                   ? null
-                  : () => openTrend(context, icon: OsIcon.activity, 
+                  : () => openTrend(
+                      context,
+                      icon: OsIcon.activity,
                       title: 'HRV (RMSSD)',
                       metric: 'hrv',
-                      accent: DomainAccent.recovery),
+                      accent: DomainAccent.recovery,
+                    ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const TileHeader('HRV'),
                   const SizedBox(height: Sp.x2),
-                  BigStat(
-                    value: hrv?['rmssd']?.toString(),
-                    unit: 'ms',
-                  ),
+                  BigStat(value: hrv?['rmssd']?.toString(), unit: 'ms'),
                   if (_n(hrv?['baseline']) != null &&
                       _n(hrv?['rmssd']) != null) ...[
                     const SizedBox(height: Sp.x2),
@@ -361,10 +368,13 @@ class HeartDayContent extends StatelessWidget {
               accent: DomainAccent.heart,
               onTap: dipPct == null
                   ? null
-                  : () => openTrend(context, icon: OsIcon.activity, 
+                  : () => openTrend(
+                      context,
+                      icon: OsIcon.activity,
                       title: 'Nocturnal HR dip',
                       metric: 'dip',
-                      accent: DomainAccent.heart),
+                      accent: DomainAccent.heart,
+                    ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -387,6 +397,13 @@ class HeartDayContent extends StatelessWidget {
             // Resting HR.
             BentoTile(
               accent: DomainAccent.heart,
+              onTap: () => openTrend(
+                context,
+                title: 'Resting HR',
+                metric: 'resting_hr',
+                icon: OsIcon.restingHeartRate,
+                accent: DomainAccent.heart,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -396,7 +413,9 @@ class HeartDayContent extends StatelessWidget {
                   BigStat(
                     value: rhr == null ? null : '${rhr.round()}',
                     unit: 'bpm',
-                    caption: rhrBase == null ? null : 'usual ${rhrBase.round()}',
+                    caption: rhrBase == null
+                        ? null
+                        : 'usual ${rhrBase.round()}',
                   ),
                 ],
               ),
@@ -443,10 +462,12 @@ class HeartDayContent extends StatelessWidget {
                   runSpacing: Sp.x1,
                   children: [
                     if (latest != null)
-                      StatusChip('Now ${latest.y.round()}',
-                          tone: ChipTone.accent),
-                    if (peak != null) StatusChip('Peak ${peak.y.round()}'),
-                    if (low != null) StatusChip('Low ${low.y.round()}'),
+                      StatusChip(
+                        'Now ${latest.y.round()}',
+                        tone: ChipTone.accent,
+                      ),
+                    if (peak != null) StatusChip('Peak ${peak.round()}'),
+                    if (low != null) StatusChip('Low ${low.round()}'),
                   ],
                 ),
               ],
@@ -470,7 +491,8 @@ class HeartDayContent extends StatelessWidget {
                   'Effort zones',
                   trailing: InfoDot(
                     title: 'Effort zones',
-                    body: 'Minutes spent in each heart-rate zone today, '
+                    body:
+                        'Minutes spent in each heart-rate zone today, '
                         'from easy (Z1) to maximal (Z5).',
                   ),
                 ),
@@ -514,9 +536,9 @@ class HeartDayContent extends StatelessWidget {
           MetricGroup([
             TrendMetricRow(
               icon: OsIcon.heartRate,
+
               // The headline HRV number gets the illustrated icon; the sibling
               // SDNN/LF-HF rows stay monochrome so the group doesn't repeat art.
-
               accent: DomainAccent.recovery,
               label: 'RMSSD',
               info: infoFor('rmssd'),
@@ -571,7 +593,8 @@ class HeartDayContent extends StatelessWidget {
                 icon: OsIcon.activity,
                 accent: DomainAccent.recovery,
                 label: 'Breathing variability',
-                info: 'How much your breathing rate varied overnight '
+                info:
+                    'How much your breathing rate varied overnight '
                     '(within-user trend), tracked against your own history.',
                 value: () {
                   final cv = _n((((d['brv'] as Map)['value']) as Map)['cv']);
@@ -583,79 +606,104 @@ class HeartDayContent extends StatelessWidget {
           ]),
         ],
 
-        // ── 24/7 irregular-rhythm SCREEN (not a diagnosis) ───────────────────
-        const SizedBox(height: Sp.x6),
-        const SectionHeader('Rhythm screen'),
-        Builder(builder: (context) {
-          if (irr24v == null) {
-            return const _QuietState(
-              icon: OsIcon.heartRate,
-              title: 'Not enough clean beats today',
-              message:
-                  'The 24/7 rhythm screen needs more artifact-free beat data '
-                  'to read today.',
-            );
-          }
-          final flag = irr24v['flag'] == true;
-          final ratio = _n(irr24v['sd1_sd2']);
-          final pnn = _n(irr24v['pnn_pct']);
-          final accent = flag ? AppColors.warn : AppColors.good;
-          return BentoTile(
-            tone: BentoTone.soft,
-            accent: accent,
+        if (daytimeHrv?['mean_rmssd'] is num) ...[
+          const SizedBox(height: Sp.x4),
+          SurfaceCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
               children: [
-                Row(
-                  children: [
-                    const OsAppIcon(OsIcon.ecgRhythm, size: 34),
-                    const SizedBox(width: Sp.x2),
-                    Expanded(
-                      child: StatusChip(
-                        flag ? 'Irregular pattern today' : 'Normal',
-                        icon: flag
-                            ? OsIcon.activity
-                            : OsIcon.check,
-                        tone: flag ? ChipTone.warn : ChipTone.positive,
-                      ),
-                    ),
-                    InfoDot(
-                      title: 'Rhythm screen',
-                      body:
-                          "A screen, not a diagnosis — wrist pulse can't see "
-                          "the heart's electrical signal. See a clinician if "
-                          'you have symptoms (palpitations, dizziness, '
-                          'breathlessness).',
-                      methodNote:
-                          'Poincaré SD1/SD2 + pNN70 over the day’s clean beats',
-                    ),
-                  ],
+                const TileHeader('Recorded daytime HRV'),
+                const SizedBox(height: Sp.x2),
+                Text(
+                  'Average ${(daytimeHrv!['mean_rmssd'] as num).round()} ms · '
+                  'low ${(daytimeHrv['min_rmssd'] as num?)?.round() ?? '—'} · '
+                  'high ${(daytimeHrv['max_rmssd'] as num?)?.round() ?? '—'} ms',
+                  style: AppText.body,
                 ),
-                const SizedBox(height: Sp.x3),
-                Row(
-                  children: [
-                    Expanded(
-                      child: BigStat(
-                        value: ratio?.toStringAsFixed(2),
-                        label: 'SD1/SD2',
-                        size: BigStatSize.md,
-                      ),
-                    ),
-                    Expanded(
-                      child: BigStat(
-                        value: pnn?.toStringAsFixed(0),
-                        unit: '%',
-                        label: 'pNN',
-                        size: BigStatSize.md,
-                      ),
-                    ),
-                  ],
+                const SizedBox(height: Sp.x2),
+                Text(
+                  '${daytimeHrv['n_buckets']} usable five-minute windows. '
+                  'RMSSD estimates from recorded beats; gaps are excluded.',
+                  style: AppText.caption,
                 ),
               ],
             ),
-          );
-        }),
+          ),
+        ],
+
+        // ── 24/7 irregular-rhythm SCREEN (not a diagnosis) ───────────────────
+        const SizedBox(height: Sp.x6),
+        const SectionHeader('Rhythm screen'),
+        Builder(
+          builder: (context) {
+            if (irr24v == null) {
+              return const _QuietState(
+                icon: OsIcon.heartRate,
+                title: 'Not enough clean beats today',
+                message:
+                    'The 24/7 rhythm screen needs more artifact-free beat data '
+                    'to read today.',
+              );
+            }
+            final flag = irr24v['flag'] == true;
+            final ratio = _n(irr24v['sd1_sd2']);
+            final pnn = _n(irr24v['pnn_pct']);
+            final accent = flag ? AppColors.warn : AppColors.good;
+            return BentoTile(
+              tone: BentoTone.soft,
+              accent: accent,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      const OsAppIcon(OsIcon.ecgRhythm, size: 34),
+                      const SizedBox(width: Sp.x2),
+                      Expanded(
+                        child: StatusChip(
+                          flag ? 'Irregular pattern today' : 'Normal',
+                          icon: flag ? OsIcon.activity : OsIcon.check,
+                          tone: flag ? ChipTone.warn : ChipTone.positive,
+                        ),
+                      ),
+                      InfoDot(
+                        title: 'Rhythm screen',
+                        body:
+                            "A screen, not a diagnosis — wrist pulse can't see "
+                            "the heart's electrical signal. See a clinician if "
+                            'you have symptoms (palpitations, dizziness, '
+                            'breathlessness).',
+                        methodNote:
+                            'Poincaré SD1/SD2 + pNN70 over the day’s clean beats',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: Sp.x3),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: BigStat(
+                          value: ratio?.toStringAsFixed(2),
+                          label: 'SD1/SD2',
+                          size: BigStatSize.md,
+                        ),
+                      ),
+                      Expanded(
+                        child: BigStat(
+                          value: pnn?.toStringAsFixed(0),
+                          unit: '%',
+                          label: 'pNN',
+                          size: BigStatSize.md,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
 
         // ── Personal baselines (Winsorized-EWMA) ─────────────────────────────
         if (baselines != null && baselines.isNotEmpty) ...[
@@ -1626,8 +1674,10 @@ class _OxygenRecentStripState extends State<_OxygenRecentStrip> {
             spacing: Sp.x2,
             runSpacing: Sp.x1,
             children: [
-              StatusChip('Latest ${latest.toStringAsFixed(1)}/h',
-                  tone: ChipTone.accent),
+              StatusChip(
+                'Latest ${latest.toStringAsFixed(1)}/h',
+                tone: ChipTone.accent,
+              ),
               StatusChip('Avg ${avg.toStringAsFixed(1)}/h'),
               StatusChip(
                 '${(latest - avg >= 0 ? '+' : '')}${(latest - avg).toStringAsFixed(1)} vs avg',
@@ -1699,9 +1749,7 @@ class _IllnessCard extends StatelessWidget {
               Expanded(
                 child: StatusChip(
                   title,
-                  icon: signal
-                      ? OsIcon.activity
-                      : OsIcon.check,
+                  icon: signal ? OsIcon.activity : OsIcon.check,
                   tone: signal ? ChipTone.warn : ChipTone.positive,
                 ),
               ),
@@ -1768,9 +1816,7 @@ class _IrregularCard extends StatelessWidget {
               Expanded(
                 child: StatusChip(
                   flag ? 'Irregular rhythm pattern' : 'Rhythm looks regular',
-                  icon: flag
-                      ? OsIcon.activity
-                      : OsIcon.check,
+                  icon: flag ? OsIcon.activity : OsIcon.check,
                   tone: flag ? ChipTone.warn : ChipTone.positive,
                 ),
               ),
@@ -1845,14 +1891,19 @@ class WearDayContent extends StatelessWidget {
         .toList();
     final firstOn = _n(d['first_on']);
     final lastOn = _n(d['last_on']);
-    final segments = (_n(d['segments']) ?? 0).toInt();
-    final longestOff = (_n(d['longest_off_min']) ?? 0).toInt();
+    final segments = d['segments'] is List
+        ? (d['segments'] as List)
+              .where((s) => s is Map && s['on'] == true)
+              .length
+        : (_n(d['segments']) ?? 0).toInt();
+    final longestOff = _n(d['longest_off_min'])?.toInt();
 
     if (worn == 0) {
       return const _QuietState(
         icon: OsIcon.wear,
-        title: 'Not worn on this day',
-        message: 'No wrist contact was recorded — nothing to analyze.',
+        title: 'No recording for this day',
+        message:
+            'The app has no downloaded measurements. This does not establish whether you wore the band.',
       );
     }
 
@@ -1866,17 +1917,17 @@ class WearDayContent extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               TileHeader(
-                'Time worn',
+                'Recorded time',
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Tag('AUTH', color: AppColors.good),
+                    Tag('RECORDED', color: AppColors.good),
                     InfoDot(
-                      title: 'Wear time',
+                      title: 'Recorded coverage',
                       body:
-                          'How long the strap was actually on your wrist, from '
-                          'the device wrist sensor. More wear = better sleep, '
-                          'recovery and baseline quality.',
+                          'Time represented by measurements saved in the app. '
+                          'Missing recordings can be caused by sync gaps even '
+                          'while you are wearing the strap.',
                     ),
                   ],
                 ),
@@ -1922,7 +1973,7 @@ class WearDayContent extends StatelessWidget {
                   'Hourly coverage',
                   trailing: InfoDot(
                     title: 'Hourly coverage',
-                    body: 'Minutes worn in each hour of the day.',
+                    body: 'Minutes with recorded data in each hour of the day.',
                   ),
                 ),
                 const SizedBox(height: Sp.x3),
@@ -1953,7 +2004,7 @@ class WearDayContent extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const TileHeader('First put on'),
+                  const TileHeader('First recording'),
                   const SizedBox(height: Sp.x2),
                   BigStat(value: _clock(firstOn), size: BigStatSize.md),
                 ],
@@ -1966,7 +2017,7 @@ class WearDayContent extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const TileHeader('Wear stretches'),
+                  const TileHeader('Recorded stretches'),
                   const SizedBox(height: Sp.x2),
                   BigStat(value: '$segments', size: BigStatSize.md),
                 ],
@@ -1980,7 +2031,7 @@ class WearDayContent extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const TileHeader('Last worn'),
+                  const TileHeader('Last recording'),
                   const SizedBox(height: Sp.x2),
                   BigStat(value: _clock(lastOn), size: BigStatSize.md),
                 ],
@@ -1993,10 +2044,12 @@ class WearDayContent extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const TileHeader('Longest off'),
+                  const TileHeader('Longest gap'),
                   const SizedBox(height: Sp.x2),
                   BigStat(
-                    value: longestOff > 0 ? hm(longestOff) : 'none',
+                    value: longestOff == null
+                        ? '—'
+                        : (longestOff > 0 ? hm(longestOff) : 'none'),
                     size: BigStatSize.md,
                   ),
                 ],

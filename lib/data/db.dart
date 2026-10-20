@@ -51,16 +51,9 @@ class LocalDb {
     return openDatabase(
       path,
       onConfigure: (db) async {
-        // WRITE PERFORMANCE. The default rollback journal (journal_mode=delete)
-        // with synchronous=FULL fsyncs the whole DB on every commit — brutal for
-        // the high-volume sync-ingest and the raw re-decode migration on a large
-        // ledger. WAL + synchronous=NORMAL is the standard mobile config: writers
-        // append to a -wal file and don't block readers, with one fsync per
-        // checkpoint instead of per commit. journal_mode is persistent per-file;
-        // synchronous/cache_size are per-connection so we set them every open.
-        // Durability trade-off under NORMAL: a crash/power-loss can lose only the
-        // last uncheckpointed transactions, never corrupt the DB — fine here since
-        // raw is re-syncable from the band and derived is recomputable.
+        // WAL allows readers during historical batch writes. FULL makes the
+        // transaction durable before the history ACK allows the strap to trim
+        // its copy. NORMAL could lose an already-ACKed batch after power loss.
         //
         // CRITICAL: a perf PRAGMA must NEVER prevent the DB from opening (a throw
         // here fails openDatabase → the app is stuck on the loading screen). And
@@ -74,7 +67,7 @@ class LocalDb {
           /* keep the default journal — this is a perf tweak, not a requirement */
         }
         try {
-          await db.execute('PRAGMA synchronous=NORMAL');
+          await db.execute('PRAGMA synchronous=FULL');
           // ~40 MB page cache (negative = KiB) so hot b-tree pages stay resident
           // on a 150 MB+ DB instead of being re-read from disk each query.
           await db.execute('PRAGMA cache_size=-40000');
@@ -84,6 +77,7 @@ class LocalDb {
       },
       onCreate: (db, version) async {
         await _createSamples(db);
+        await _createLiveHr(db);
         await _createDecodedStore(db);
         await db.execute('CREATE INDEX idx_samples_ts ON samples(ts)');
         await _createEvents(db);
@@ -103,6 +97,7 @@ class LocalDb {
         await _ensureCoachViews(db);
       },
       onUpgrade: (db, oldV, newV) async {
+        if (oldV < 26) await _createLiveHr(db);
         if (oldV < 2) await _createEvents(db);
         if (oldV < 3) {
           // Re-key raw_records by frame hex so LIVE packets (0x28/0x33) — which
@@ -303,11 +298,12 @@ class LocalDb {
           // right.
           await _ensureDayResultPartialColumn(db);
         }
+        if (oldV < 27) await _ensureSessionSchema(db);
       },
       onOpen: (db) async {
         await _repairOpenSchema(db);
       },
-      version: 25,
+      version: 27,
     );
   }
 
@@ -316,6 +312,7 @@ class LocalDb {
     // existing install. Keep this idempotent and cheap: create missing tables,
     // indexes, and additive columns the current code assumes are present.
     await _createSamples(db);
+    await _createLiveHr(db);
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_samples_ts ON samples(ts)',
     );
@@ -818,6 +815,9 @@ class LocalDb {
         calories REAL,
         strain REAL,
         max_hr INTEGER,
+        avg_hr REAL,
+        min_hr INTEGER,
+        hr_sample_count INTEGER,
         duration_min INTEGER,
         zone_min_json TEXT,
         steps INTEGER,
@@ -957,6 +957,17 @@ class LocalDb {
     if (!names.contains('hrr_bpm')) {
       await db.execute('ALTER TABLE sessions ADD COLUMN hrr_bpm REAL');
     }
+    for (final column in {
+      'avg_hr': 'REAL',
+      'min_hr': 'INTEGER',
+      'hr_sample_count': 'INTEGER',
+    }.entries) {
+      if (!names.contains(column.key)) {
+        await db.execute(
+          'ALTER TABLE sessions ADD COLUMN ${column.key} ${column.value}',
+        );
+      }
+    }
   }
 
   // ── WORKOUT SUGGESTIONS (opt-in auto-detect) ───────────────────────────────
@@ -1016,6 +1027,7 @@ class LocalDb {
     const views = [
       'v_metric',
       'v_daily',
+      'v_recording',
       'v_series',
       'v_hypnogram',
       'v_sessions',
@@ -1029,6 +1041,33 @@ class LocalDb {
     await db.execute('''
       CREATE VIEW v_metric AS
       SELECT date, key, value FROM metric_series
+    ''');
+    // Deterministic summaries + evidence coverage for the coach. It can inspect
+    // observed HR without gaining access to individual sensor records.
+    await db.execute('''
+      CREATE VIEW v_recording AS
+      WITH observed AS (
+        SELECT date(rec_ts, 'unixepoch', 'localtime') AS date,
+          COUNT(*) AS recorded_seconds, AVG(hr) AS avg_hr,
+          MIN(hr) AS min_hr, MAX(hr) AS max_hr,
+          MIN(rec_ts) AS first_ts, MAX(rec_ts) AS last_ts,
+          SUM(CASE WHEN source='live_received' THEN 1 ELSE 0 END) AS live_seconds
+        FROM ($_hrUnion) GROUP BY date(rec_ts, 'unixepoch', 'localtime')
+      ), latest AS (
+        SELECT r.day_id, r.payload_json, r.algo_version FROM day_result r
+        JOIN (SELECT day_id, MAX(algo_version) v FROM day_result GROUP BY day_id) m
+          ON r.day_id=m.day_id AND r.algo_version=m.v
+      ), dates AS (
+        SELECT date FROM observed UNION SELECT day_id AS date FROM latest
+      )
+      SELECT d.date,
+        COALESCE(o.recorded_seconds, json_extract(l.payload_json,'\$.coverage.hr_valid'), 0) AS recorded_seconds,
+        COALESCE(o.avg_hr, json_extract(l.payload_json,'\$.hr_stats.avg')) AS avg_hr,
+        COALESCE(o.min_hr, json_extract(l.payload_json,'\$.hr_stats.min')) AS min_hr,
+        COALESCE(o.max_hr, json_extract(l.payload_json,'\$.hr_stats.max')) AS max_hr,
+        o.first_ts, o.last_ts, o.live_seconds, l.algo_version
+      FROM dates d LEFT JOIN observed o ON o.date=d.date
+      LEFT JOIN latest l ON l.day_id=d.date
     ''');
     // One row per day, common scalars pivoted from metric_series (no JSON path
     // drift; metric_series is the canonical scalar store).
@@ -1521,25 +1560,39 @@ class LocalDb {
   static Sample? _decodeOneHzSample(RawRecord raw, {Sample? preferred}) {
     if (preferred != null && preferred.hasDecodedOneHz) return preferred;
     try {
-      // Legacy decoder first, firmware-fallback chain second — see
-      // FirmwareAwareR24Decoder. This path only runs when no pre-decoded
-      // `preferred` sample was supplied (e.g. a raw-hex import/merge), so a
-      // fresh per-call instance is fine — no session state to preserve.
-      final r = proto.FirmwareAwareR24Decoder().decode(
-        proto.hexToBytes(raw.hex),
-      );
-      if (r == null || r.tsEpoch <= 0) return null;
+      final bytes = proto.hexToBytes(raw.hex);
+      final r = proto.FirmwareAwareR24Decoder().decode(bytes);
+      if (r != null && r.tsEpoch > 0) {
+        return Sample(
+          tsEpoch: r.tsEpoch,
+          counter: r.counter,
+          hr: r.hr,
+          rrIntervalsMs: List<int>.from(r.rrIntervalsMs),
+          ax: r.accelG.isNotEmpty ? r.accelG[0] : 0,
+          ay: r.accelG.length > 1 ? r.accelG[1] : 0,
+          az: r.accelG.length > 2 ? r.accelG[2] : 0,
+          spo2RedRaw: r.spo2RedRaw,
+          spo2IrRaw: r.spo2IrRaw,
+          skinTempRaw: r.skinTempRaw,
+        );
+      }
+    } catch (_) {
+      // Try the generation-5 decoder below.
+    }
+    try {
+      final bytes = proto.hexToBytes(raw.hex);
+      final r = proto.parseGen5Historical(bytes);
+      if (r is! proto.Gen5HistorySample || r.unix <= 0) return null;
+      final g = r.gravityG;
       return Sample(
-        tsEpoch: r.tsEpoch,
-        counter: r.counter,
-        hr: r.hr,
+        tsEpoch: r.unix,
+        counter: r.recordIndex,
+        hr: r.heartRate,
         rrIntervalsMs: List<int>.from(r.rrIntervalsMs),
-        ax: r.accelG.isNotEmpty ? r.accelG[0] : 0,
-        ay: r.accelG.length > 1 ? r.accelG[1] : 0,
-        az: r.accelG.length > 2 ? r.accelG[2] : 0,
-        spo2RedRaw: r.spo2RedRaw,
-        spo2IrRaw: r.spo2IrRaw,
-        skinTempRaw: r.skinTempRaw,
+        ax: g.isNotEmpty ? g[0] : null,
+        ay: g.length > 1 ? g[1] : null,
+        az: g.length > 2 ? g[2] : null,
+        isGen5: true,
       );
     } catch (_) {
       return null;
@@ -1770,7 +1823,9 @@ class LocalDb {
   ///     coarse proxy — one "plugged in" event per cycle);
   ///   - `latest_pct` / `latest_mv`: the most recent sample.
   /// All fields are nullable (absent input → null, never fabricated).
-  static Future<Map<String, dynamic>> batteryHealth({int lookback = 2000}) async {
+  static Future<Map<String, dynamic>> batteryHealth({
+    int lookback = 2000,
+  }) async {
     final rows = await recentBandBatterySamples(limit: lookback);
     if (rows.isEmpty) {
       return const {
@@ -1788,7 +1843,9 @@ class LocalDb {
     for (final r in rows.reversed) {
       final mv = (r['millivolts'] as num?)?.toInt();
       final ch = (r['charging'] as num?)?.toInt();
-      if (ch == 1 && mv != null && (fullChargeMv == null || mv > fullChargeMv)) {
+      if (ch == 1 &&
+          mv != null &&
+          (fullChargeMv == null || mv > fullChargeMv)) {
         fullChargeMv = mv;
       }
       if (ch != null) {
@@ -2331,8 +2388,13 @@ class LocalDb {
       'MAX(rec_ts) AS max_rec_ts '
       'FROM decoded_onehz WHERE rec_ts > 0 GROUP BY day_id ORDER BY day_id DESC',
     );
+    final liveRows = await db.rawQuery(
+      "SELECT strftime('%Y-%m-%d', rec_ts, 'unixepoch', 'localtime') AS day_id, "
+      'COUNT(*) AS live_count, MIN(rec_ts) AS min_rec_ts, MAX(rec_ts) AS max_rec_ts '
+      'FROM live_hr WHERE rec_ts > 0 GROUP BY day_id',
+    );
     final derivedRows = await db.rawQuery(
-      'SELECT r.day_id, r.algo_version, r.computed_at, r.finalized '
+      'SELECT r.day_id, r.algo_version, r.computed_at, r.finalized, r.skipped, r.partial '
       'FROM day_result r '
       'JOIN (SELECT day_id, MAX(algo_version) AS v FROM day_result GROUP BY day_id) m '
       '  ON r.day_id = m.day_id AND r.algo_version = m.v '
@@ -2353,6 +2415,9 @@ class LocalDb {
       () => {
         'day_id': dayId,
         'raw_count': 0,
+        'live_count': 0,
+        'analysis_failed': false,
+        'analysis_partial': false,
         'min_rec_ts': null,
         'max_rec_ts': null,
         'has_derived': false,
@@ -2371,11 +2436,28 @@ class LocalDb {
       m['min_rec_ts'] = (row['min_rec_ts'] as num?)?.toInt();
       m['max_rec_ts'] = (row['max_rec_ts'] as num?)?.toInt();
     }
+    for (final row in liveRows) {
+      final dayId = row['day_id']?.toString();
+      if (dayId == null || dayId.isEmpty) continue;
+      final m = ensure(dayId);
+      m['live_count'] = (row['live_count'] as num?)?.toInt() ?? 0;
+      for (final field in ['min_rec_ts', 'max_rec_ts']) {
+        final live = (row[field] as num?)?.toInt();
+        final current = m[field] as int?;
+        if (live != null &&
+            (current == null ||
+                (field == 'min_rec_ts' ? live < current : live > current))) {
+          m[field] = live;
+        }
+      }
+    }
     for (final row in derivedRows) {
       final dayId = row['day_id']?.toString();
       if (dayId == null || dayId.isEmpty) continue;
       final m = ensure(dayId);
-      m['has_derived'] = true;
+      m['analysis_failed'] = row['skipped'] == 1;
+      m['analysis_partial'] = row['partial'] == 1;
+      m['has_derived'] = row['skipped'] != 1;
       m['algo_version'] = (row['algo_version'] as num?)?.toInt();
       m['computed_at'] = (row['computed_at'] as num?)?.toInt();
       m['finalized'] = (row['finalized'] as num?)?.toInt() ?? 0;
@@ -2416,6 +2498,7 @@ class LocalDb {
       dest,
       onCreate: (db, _) async {
         await _createSamples(db);
+        await _createLiveHr(db);
         await _createDecodedStore(db);
         await db.execute('CREATE INDEX idx_samples_ts ON samples(ts)');
         await _createEvents(db);
@@ -2497,6 +2580,11 @@ class LocalDb {
       await copyRows(
         'samples',
         where: 'ts >= ? AND ts < ?',
+        whereArgs: [startSec, endSec],
+      );
+      await copyRows(
+        'live_hr',
+        where: 'rec_ts >= ? AND rec_ts < ?',
         whereArgs: [startSec, endSec],
       );
       await copyRows(
@@ -2589,6 +2677,11 @@ class LocalDb {
           whereArgs: [startSec, endSec],
         );
         deleted += await txn.delete(
+          'live_hr',
+          where: 'rec_ts >= ? AND rec_ts < ?',
+          whereArgs: [startSec, endSec],
+        );
+        deleted += await txn.delete(
           'events',
           where: 'ts >= ? AND ts < ?',
           whereArgs: [startSec, endSec],
@@ -2640,6 +2733,7 @@ class LocalDb {
     final db = await instance;
     // Order: independent tables; all use INSERT OR REPLACE so re-import is safe.
     const tables = [
+      'live_hr',
       'samples',
       'events',
       'decoded_onehz',
@@ -3481,14 +3575,67 @@ class LocalDb {
 
   // ── sessions (workouts) I/O ────────────────────────────────────────────────
 
-  /// Upsert a workout session row (INSERT OR REPLACE — idempotent on id).
+  /// Merge updates so later type/status writes cannot erase saved HR summaries.
+  /// Finalization and its measured HR summary commit before the finish UI loads.
   static Future<void> putSession(Map<String, dynamic> row) async {
+    await flushLiveHeartRate();
     final db = await instance;
-    await db.insert(
-      'sessions',
-      row,
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.transaction((txn) async {
+      final old = await txn.query(
+        'sessions',
+        where: 'id = ?',
+        whereArgs: [row['id']],
+      );
+      await txn.insert('sessions', {
+        if (old.isNotEmpty) ...old.first,
+        ...row,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      if (row['status'] == 'done') {
+        await _refreshWorkoutHrSummaries(txn, id: row['id'] as String);
+      }
+    });
+  }
+
+  /// Keep aggregates permanently even when the historical substrate is pruned.
+  /// Never replace a more complete saved summary with a truncated raw window.
+  static Future<int> _refreshWorkoutHrSummaries(
+    DatabaseExecutor db, {
+    String? id,
+  }) async {
+    final rows = await db.rawQuery('''
+      SELECT s.id, COUNT(d.rec_ts) AS n, AVG(d.hr) AS avg_hr,
+        MIN(d.hr) AS min_hr, MAX(d.hr) AS max_hr
+      FROM sessions s JOIN ($_hrUnion) d
+        ON d.rec_ts >= s.start_ts AND d.rec_ts <= s.end_ts
+      WHERE s.status = 'done' ${id == null ? '' : 'AND s.id = ?'}
+      GROUP BY s.id
+      HAVING COUNT(d.rec_ts) >= COALESCE(s.hr_sample_count, 0)
+    ''', id == null ? [] : [id]);
+    for (final r in rows) {
+      await db.rawUpdate(
+        '''UPDATE sessions SET avg_hr = ?, min_hr = ?,
+        hr_sample_count = ?, max_hr = MAX(COALESCE(max_hr, 0), ?)
+        WHERE id = ?''',
+        [r['avg_hr'], r['min_hr'], r['n'], r['max_hr'], r['id']],
+      );
+    }
+    return rows.length;
+  }
+
+  static Future<({int updated, int missing})> rebuildWorkoutHeartRates() async {
+    await flushLiveHeartRate();
+    final db = await instance;
+    return db.transaction((txn) async {
+      final updated = await _refreshWorkoutHrSummaries(txn);
+      final missing =
+          Sqflite.firstIntValue(
+            await txn.rawQuery(
+              "SELECT COUNT(*) FROM sessions WHERE status = 'done' AND avg_hr IS NULL",
+            ),
+          ) ??
+          0;
+      return (updated: updated, missing: missing);
+    });
   }
 
   static Future<Map<String, dynamic>?> session(String id) async {
@@ -3571,15 +3718,19 @@ class LocalDb {
     final db = await instance;
     final batch = db.batch();
     for (final r in rows) {
-      batch.insert('workout_route', r,
-          conflictAlgorithm: ConflictAlgorithm.replace);
+      batch.insert(
+        'workout_route',
+        r,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
     }
     await batch.commit(noResult: true);
   }
 
   /// All route rows for a session, ordered by seq.
   static Future<List<Map<String, dynamic>>> routePoints(
-      String sessionId) async {
+    String sessionId,
+  ) async {
     final db = await instance;
     return db.query(
       'workout_route',
@@ -3599,6 +3750,50 @@ class LocalDb {
     return rows.isNotEmpty;
   }
 
+  static Future<void> _createLiveHr(Database db) => db.execute('''
+    CREATE TABLE IF NOT EXISTS live_hr (
+      rec_ts INTEGER PRIMARY KEY,
+      hr INTEGER NOT NULL,
+      source TEXT NOT NULL DEFAULT 'live_received'
+    )
+  ''');
+
+  /// Compact, actual received HR only. Never store high-rate raw frames or
+  /// repeat the last reading from a timer. Receipt time is explicit provenance;
+  /// this does not advance the band's historical sync cursor.
+  static Future<void> _pendingLiveWrite = Future<void>.value();
+
+  static Future<void> flushLiveHeartRate() => _pendingLiveWrite;
+
+  static Future<void> recordLiveHeartRate(int receivedSec, int hr) {
+    if (receivedSec <= 0 || hr < 25 || hr > 230) return Future<void>.value();
+    Future<void> write() async {
+      final db = await instance;
+      await db.insert('live_hr', {
+        'rec_ts': receivedSec,
+        'hr': hr,
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    }
+
+    // Capture the pending write synchronously, before any DB-open await, so
+    // finishing a workout can wait for all already-received measurements.
+    _pendingLiveWrite = _pendingLiveWrite.then<void>(
+      (_) => write(),
+      onError: (Object error, StackTrace stack) => write(),
+    );
+    return _pendingLiveWrite;
+  }
+
+  // Historical measurements win when the same second has both sources.
+  static const _hrUnion = '''
+    SELECT rec_ts, hr, 'historical' AS source FROM decoded_onehz WHERE hr > 0
+    UNION ALL
+    SELECT l.rec_ts, l.hr, l.source FROM live_hr l
+    WHERE NOT EXISTS (
+      SELECT 1 FROM decoded_onehz d WHERE d.rec_ts = l.rec_ts AND d.hr > 0
+    )
+  ''';
+
   /// 1 Hz heart-rate samples in [fromTs, toTs] (epoch SECONDS), ascending, used
   /// to colour a route and average HR per split. Only worn seconds (hr > 0).
   static Future<List<Map<String, dynamic>>> hrSamplesInRange(
@@ -3606,20 +3801,50 @@ class LocalDb {
     int toTs,
   ) async {
     final db = await instance;
-    return db.query(
-      'decoded_onehz',
-      columns: ['rec_ts', 'hr'],
-      where: 'rec_ts >= ? AND rec_ts <= ? AND hr > 0',
-      whereArgs: [fromTs, toTs],
-      orderBy: 'rec_ts ASC',
+    return db.rawQuery(
+      'SELECT * FROM ($_hrUnion) WHERE rec_ts >= ? AND rec_ts <= ? '
+      'ORDER BY rec_ts ASC',
+      [fromTs, toTs],
     );
+  }
+
+  /// Daily observed HR means for a bounded local calendar range. Like the day
+  /// detail, prefer retained measurements and keep saved HR summaries when the
+  /// seconds have been pruned. No sleep result or full-day coverage is required.
+  static Future<List<Map<String, dynamic>>> recordedHrSeries(
+    String fromDate,
+    String toDateExclusive,
+  ) async {
+    final db = await instance;
+    final fromTs = DateTime.parse(fromDate).millisecondsSinceEpoch ~/ 1000;
+    final toTs = DateTime.parse(toDateExclusive).millisecondsSinceEpoch ~/ 1000;
+    return db.rawQuery('''
+      WITH observed AS (
+        SELECT date(rec_ts, 'unixepoch', 'localtime') AS date, AVG(hr) AS value
+        FROM ($_hrUnion) WHERE rec_ts >= ? AND rec_ts < ?
+        GROUP BY date(rec_ts, 'unixepoch', 'localtime')
+      ), saved AS (
+        SELECT r.day_id AS date,
+          json_extract(r.payload_json, '\$.hr_stats.avg') AS value
+        FROM day_result r
+        WHERE r.day_id >= ? AND r.day_id < ?
+          AND r.algo_version = (
+            SELECT MAX(v.algo_version) FROM day_result v
+            WHERE v.day_id = r.day_id
+          )
+      )
+      SELECT date, value FROM observed
+      UNION ALL
+      SELECT date, value FROM saved s WHERE value > 0
+        AND NOT EXISTS (SELECT 1 FROM observed o WHERE o.date = s.date)
+      ORDER BY date ASC
+    ''', [fromTs, toTs, fromDate, toDateExclusive]);
   }
 
   /// Per-session HR aggregates over the 1 Hz substrate for every session in
   /// [fromTs, toTs] (epoch SECONDS): {session_id: {n, avg_hr, min_hr, max_hr}}.
   /// One indexed range join — powers the workout list's avg-bpm / no-data
-  /// heuristic without a query per row. Sessions whose window has been pruned
-  /// (14-day raw retention) simply don't appear.
+  /// heuristic without a query per row. Saved session summaries survive pruning.
   static Future<Map<String, Map<String, num>>> sessionHrStats(
     int fromTs,
     int toTs,
@@ -3629,11 +3854,11 @@ class LocalDb {
       'SELECT s.id AS id, COUNT(d.rec_ts) AS n, AVG(d.hr) AS avg_hr, '
       '       MIN(d.hr) AS min_hr, MAX(d.hr) AS max_hr '
       'FROM sessions s '
-      'JOIN decoded_onehz d ON d.rec_ts >= s.start_ts '
-      '  AND d.rec_ts <= COALESCE(s.end_ts, s.start_ts) AND d.hr > 0 '
+      'JOIN ($_hrUnion) d ON d.rec_ts >= s.start_ts '
+      '  AND d.rec_ts <= COALESCE(s.end_ts, ?) AND d.hr > 0 '
       'WHERE s.start_ts >= ? AND s.start_ts <= ? '
       'GROUP BY s.id',
-      [fromTs, toTs],
+      [toTs, fromTs, toTs],
     );
     return {
       for (final r in rows)
@@ -3687,6 +3912,7 @@ class LocalDb {
     // caller's `if (deleted > 0) log(...)` never fired even on a real prune.
     int deleted = 0;
     await db.transaction((txn) async {
+      await _refreshWorkoutHrSummaries(txn);
       deleted += await txn.delete(
         'decoded_rr',
         where:
@@ -3710,14 +3936,26 @@ class LocalDb {
             'rr_ts_ms < ? AND counter NOT IN (SELECT counter FROM decoded_onehz)',
         whereArgs: [cutoffSec * 1000],
       );
-      deleted +=
-          await txn.delete('samples', where: 'ts < ?', whereArgs: [cutoffSec]);
-      deleted +=
-          await txn.delete('events', where: 'ts < ?', whereArgs: [cutoffSec]);
-      deleted += await txn.delete('band_events',
-          where: 'ts < ?', whereArgs: [cutoffSec]);
-      deleted += await txn.delete('band_battery',
-          where: 'ts < ?', whereArgs: [cutoffSec]);
+      deleted += await txn.delete(
+        'samples',
+        where: 'ts < ?',
+        whereArgs: [cutoffSec],
+      );
+      deleted += await txn.delete(
+        'events',
+        where: 'ts < ?',
+        whereArgs: [cutoffSec],
+      );
+      deleted += await txn.delete(
+        'band_events',
+        where: 'ts < ?',
+        whereArgs: [cutoffSec],
+      );
+      deleted += await txn.delete(
+        'band_battery',
+        where: 'ts < ?',
+        whereArgs: [cutoffSec],
+      );
     });
     return deleted;
   }

@@ -18,7 +18,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
-import 'package:openstrap_edge/compute/derivation_engine.dart' show kAlgoVersion;
+import 'package:openstrap_edge/compute/derivation_engine.dart'
+    show kAlgoVersion;
 import 'package:openstrap_edge/data/db.dart';
 import 'package:openstrap_edge/data/day_label.dart';
 import 'package:openstrap_edge/data/local_repository_impl.dart';
@@ -40,10 +41,11 @@ void main() {
 
   final repo = LocalRepositoryImpl(getProfileMap: () => null);
   final today = todayLabel();
-  final yesterday = dayLabelOf(DateTime.now().subtract(const Duration(days: 1)));
+  final yesterday = dayLabelOf(
+    DateTime.now().subtract(const Duration(days: 1)),
+  );
 
-  test(
-      "when today's own day_result is missing, getDayStrain's steps come "
+  test("when today's own day_result is missing, getDayStrain's steps come "
       'from wake_day_features, NOT a fallback to a prior complete day', () async {
     // Yesterday's finalized bundle exists and has a real (different) steps
     // figure — this is what the old code would have silently surfaced as
@@ -71,14 +73,14 @@ void main() {
     expect(
       strain['steps'],
       321,
-      reason: 'must use today\'s own interim estimate (wake_day_features), '
+      reason:
+          'must use today\'s own interim estimate (wake_day_features), '
           'never a different day\'s finalized step count',
     );
     expect(strain['steps'], isNot(9999));
   });
 
-  test(
-      "once today's own day_result exists, getDayStrain's steps come from "
+  test("once today's own day_result exists, getDayStrain's steps come from "
       "today's own bundle again (the fallback path is bypassed)", () async {
     await LocalDb.putDayResult(
       dayId: today,
@@ -94,10 +96,12 @@ void main() {
     expect(strain['steps'], 4321);
   });
 
-  test(
-      'a genuine historical date with no bundle at all returns an honest '
+  test('a genuine historical date with no bundle at all returns an honest '
       'empty shape (no fallback, no wake_day_features substitution)', () async {
     final strain = await repo.getDayStrain('2020-01-01');
-    expect(strain, isEmpty);
+    expect(strain['strain'], isNull);
+    expect(strain['steps'], isNull);
+    expect(strain['curve'], isEmpty);
+    expect((strain['recording'] as Map)['recorded_seconds'], 0);
   });
 }

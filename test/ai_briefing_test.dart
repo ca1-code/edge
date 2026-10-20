@@ -22,9 +22,9 @@ class _FakeRepo extends LocalRepository {
     Map<String, dynamic>? today,
     Map<String, dynamic>? daySleep,
     List<Map<String, dynamic>>? sessions,
-  })  : today = today ?? {},
-        daySleep = daySleep ?? {},
-        sessions = sessions ?? const [];
+  }) : today = today ?? {},
+       daySleep = daySleep ?? {},
+       sessions = sessions ?? const [];
 
   @override
   Future<Map<String, dynamic>> getToday() async => today;
@@ -36,19 +36,19 @@ class _FakeRepo extends LocalRepository {
 }
 
 Map<String, dynamic> _sampleToday() => {
-      'daily': {
-        'readiness': {'value': 74},
-        'resting_hr': {'value': 52},
-        'strain': {'value': 12.4},
-        'steps': {'value': 8300},
-        'calories_total': {'value': 2450},
-        'wear_min': {'value': 1380},
-      },
-      'hrv': {'rmssd': 61.2},
-      'stress': {'score': 33},
-      'status': {'overnight_day': todayLabel()},
-      'step_goal': 10000,
-    };
+  'daily': {
+    'readiness': {'value': 74},
+    'resting_hr': {'value': 52},
+    'strain': {'value': 12.4},
+    'steps': {'value': 8300},
+    'calories_total': {'value': 2450},
+    'wear_min': {'value': 1380},
+  },
+  'hrv': {'rmssd': 61.2},
+  'stress': {'score': 33},
+  'status': {'overnight_day': todayLabel()},
+  'step_goal': 10000,
+};
 
 void main() {
   setUp(() async {
@@ -81,6 +81,32 @@ void main() {
       expect(inp.containsKey('steps'), isFalse);
     });
 
+    test(
+      'briefing carries coverage and rejects an old overnight date',
+      () async {
+        final repo = _FakeRepo(
+          today: {
+            'daily': {},
+            'status': {'overnight_day': '2026-09-05'},
+            'recording': {
+              'date': '2026-09-19',
+              'recorded_min': 120,
+              'coverage_pct': 8.33,
+            },
+          },
+          daySleep: {'has_sleep': true, 'duration_min': 772},
+        );
+        final inputs = await collectBriefingInputs(
+          repo,
+          BriefingPeriod.morning,
+          now: DateTime(2026, 9, 19),
+        );
+        expect(inputs['hr_recorded_minutes'], 120);
+        expect(inputs['hr_coverage_percent'], 8.3);
+        expect(inputs.containsKey('sleep_min'), isFalse);
+      },
+    );
+
     test('evening pulls activity + workouts, not sleep', () async {
       final repo = _FakeRepo(
         today: _sampleToday(),
@@ -103,13 +129,15 @@ void main() {
       expect(inp.containsKey('sleep_min'), isFalse);
     });
 
-    test('missing metrics produce an empty-ish snapshot, never fabricated',
-        () async {
-      final repo = _FakeRepo(today: {'daily': {}});
-      final inp = await collectBriefingInputs(repo, BriefingPeriod.morning);
-      expect(inp.containsKey('readiness'), isFalse);
-      expect(inp.containsKey('sleep_min'), isFalse);
-    });
+    test(
+      'missing metrics produce an empty-ish snapshot, never fabricated',
+      () async {
+        final repo = _FakeRepo(today: {'daily': {}});
+        final inp = await collectBriefingInputs(repo, BriefingPeriod.morning);
+        expect(inp.containsKey('readiness'), isFalse);
+        expect(inp.containsKey('sleep_min'), isFalse);
+      },
+    );
   });
 
   group('prompt building (pure)', () {
@@ -122,11 +150,15 @@ void main() {
     });
 
     test('user prompt lists provided metrics and marks empty data', () {
-      final p = buildBriefingUserPrompt(
-          BriefingPeriod.morning, '2026-07-04', {'readiness': 74});
+      final p = buildBriefingUserPrompt(BriefingPeriod.morning, '2026-07-04', {
+        'readiness': 74,
+      });
       expect(p, contains('readiness: 74'));
       final empty = buildBriefingUserPrompt(
-          BriefingPeriod.evening, '2026-07-04', {});
+        BriefingPeriod.evening,
+        '2026-07-04',
+        {},
+      );
       expect(empty, contains('no metrics available'));
     });
   });
@@ -134,14 +166,14 @@ void main() {
   group('response parsing', () {
     test('splits one-liner from bullets on the --- separator', () {
       final r = parseBriefingResponse(
-          'You recovered well overnight.\n---\n- HRV up 6ms\n- RHR steady at 52');
+        'You recovered well overnight.\n---\n- HRV up 6ms\n- RHR steady at 52',
+      );
       expect(r.oneLiner, 'You recovered well overnight.');
       expect(r.breakdownMd, contains('- HRV up 6ms'));
     });
 
     test('tolerates a missing separator and code fences', () {
-      final r = parseBriefingResponse(
-          '```\nSolid day.\n- Good strain\n```');
+      final r = parseBriefingResponse('```\nSolid day.\n- Good strain\n```');
       expect(r.oneLiner, 'Solid day.');
       expect(r.breakdownMd, contains('Good strain'));
     });
@@ -152,7 +184,8 @@ void main() {
       final repo = _FakeRepo(today: _sampleToday());
       var seenSystem = '';
       final engine = BriefingEngine(
-        config: CoachConfig(), // unconfigured — the mocked completer bypasses it
+        config:
+            CoachConfig(), // unconfigured — the mocked completer bypasses it
         repo: repo,
         complete: ({required system, required user}) async {
           seenSystem = system;
@@ -171,19 +204,21 @@ void main() {
     });
 
     test('cache read is scoped to the day (stale day → null)', () {
-      BriefingStore.write(Briefing(
-        day: '1999-01-01',
-        period: BriefingPeriod.morning,
-        oneLiner: 'stale',
-        breakdownMd: '- stale',
-        generatedAtMs: 0,
-        inputs: const {},
-      ));
+      BriefingStore.write(
+        Briefing(
+          day: '1999-01-01',
+          period: BriefingPeriod.morning,
+          oneLiner: 'stale',
+          breakdownMd: '- stale',
+          generatedAtMs: 0,
+          inputs: const {},
+        ),
+      );
       expect(BriefingStore.read(BriefingPeriod.morning), isNull);
       expect(
-          BriefingStore.read(BriefingPeriod.morning, day: '1999-01-01')
-              ?.oneLiner,
-          'stale');
+        BriefingStore.read(BriefingPeriod.morning, day: '1999-01-01')?.oneLiner,
+        'stale',
+      );
     });
   });
 

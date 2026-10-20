@@ -42,8 +42,18 @@ String _dayLabel(int? startTs) {
   if (diff == 0) return 'Today';
   if (diff == 1) return 'Yesterday';
   const mon = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
   ];
   return '${mon[d.month - 1]} ${d.day}';
 }
@@ -69,8 +79,18 @@ String _whenLabel(int? startTs) {
   if (diff == 0) return 'Today · $time';
   if (diff == 1) return 'Yesterday · $time';
   const mon = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
   ];
   return '${mon[d.month - 1]} ${d.day} · $time';
 }
@@ -107,10 +127,12 @@ Future<void> startWorkoutFlow(BuildContext context) async {
     // Start the LOCAL live engine (live HR UI + iOS Live Activity + global
     // state) alongside the backend session, then open the interactive screen.
     app.startWorkout(workoutId: id, type: type);
-    Navigator.of(
-      context,
-    ).push(themedRoute((_) => LiveSessionScreen(workoutId: id, type: type),
-        name: 'LiveSessionScreen'));
+    Navigator.of(context).push(
+      themedRoute(
+        (_) => LiveSessionScreen(workoutId: id, type: type),
+        name: 'LiveSessionScreen',
+      ),
+    );
   } catch (_) {
     /* surfaced as no-op; user can retry */
   }
@@ -237,7 +259,11 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
 
     return AppScaffold(
       title: 'Workouts',
-      actions: [_StartButton(onTap: () => startWorkoutFlow(context).then((_) => _load()))],
+      actions: [
+        _StartButton(
+          onTap: () => startWorkoutFlow(context).then((_) => _load()),
+        ),
+      ],
       header: SegmentedControl(
         options: _ranges,
         index: _range,
@@ -292,7 +318,8 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
                   title: 'No workouts',
                   message: 'Tap Start, or an effort will be auto-detected.',
                   actionLabel: 'Start a workout',
-                  onAction: () => startWorkoutFlow(context).then((_) => _load()),
+                  onAction: () =>
+                      startWorkoutFlow(context).then((_) => _load()),
                 )
               else
                 ..._feed(list.cast<Map<String, dynamic>>()),
@@ -313,8 +340,10 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
     final groups = <String, List<Map<String, dynamic>>>{};
     final order = <String>[];
     void add(String label, Map<String, dynamic> w) {
-      (groups[label] ??= (order..add(label), <Map<String, dynamic>>[]).$2)
-          .add(w);
+      (groups[label] ??= (
+        order..add(label),
+        <Map<String, dynamic>>[],
+      ).$2).add(w);
     }
 
     if (_range == 0) {
@@ -355,8 +384,18 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
     if (diffWeeks <= 0) return 'This week';
     if (diffWeeks == 1) return 'Last week';
     const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     return 'Week of ${months[wk.month - 1]} ${wk.day}';
   }
@@ -375,8 +414,10 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
         mostSteps: mostSteps,
         entranceIndex: index,
         onTap: () => Navigator.of(context).push(
-          themedRoute((_) => WorkoutDetailScreen(id: w['id'] as String),
-              name: 'WorkoutDetailScreen'),
+          themedRoute(
+            (_) => WorkoutDetailScreen(id: w['id'] as String),
+            name: 'WorkoutDetailScreen',
+          ),
         ),
         onLongPress: w['status'] == 'live' ? null : () => _exportCard(w),
       ),
@@ -527,41 +568,52 @@ class _SuggestionCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            workoutTypeOsIcon(sport) != null
-                ? OsAppIcon(workoutTypeOsIcon(sport)!, size: 28)
-                : AppIcon(workoutTypeIcon(sport), size: 18, color: AppColors.accent),
-            const SizedBox(width: Sp.x3),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Did you work out?', style: AppText.title),
-                  const SizedBox(height: 1),
-                  Text(
-                    '${_whenLabel(start)} · ${dur ?? '—'} min'
-                    '${avg != null ? ' · avg $avg' : ''}'
-                    '${peak != null ? ' · peak $peak bpm' : ''}',
-                    style: AppText.captionMuted,
-                  ),
-                ],
+          Row(
+            children: [
+              workoutTypeOsIcon(sport) != null
+                  ? OsAppIcon(workoutTypeOsIcon(sport)!, size: 28)
+                  : AppIcon(
+                      workoutTypeIcon(sport),
+                      size: 18,
+                      color: AppColors.accent,
+                    ),
+              const SizedBox(width: Sp.x3),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Did you work out?', style: AppText.title),
+                    const SizedBox(height: 1),
+                    Text(
+                      '${_whenLabel(start)} · ${dur ?? '—'} min'
+                      '${avg != null ? ' · avg $avg' : ''}'
+                      '${peak != null ? ' · peak $peak bpm' : ''}',
+                      style: AppText.captionMuted,
+                    ),
+                  ],
+                ),
               ),
-            ),
-            InfoDot(
-              title: 'Auto-detected effort',
-              body:
-                  'We spotted a stretch of elevated heart rate that looks like '
-                  'a workout. Confirm to log it — we never log one silently.',
-            ),
-          ]),
+              InfoDot(
+                title: 'Auto-detected effort',
+                body:
+                    'We spotted a stretch of elevated heart rate that looks like '
+                    'a workout. Confirm to log it — we never log one silently.',
+              ),
+            ],
+          ),
           const SizedBox(height: Sp.x3),
-          Row(children: [
-            Expanded(
-              child: FilledButton(onPressed: onConfirm, child: const Text('Log it')),
-            ),
-            const SizedBox(width: Sp.x3),
-            TextButton(onPressed: onDismiss, child: const Text('Dismiss')),
-          ]),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton(
+                  onPressed: onConfirm,
+                  child: const Text('Log it'),
+                ),
+              ),
+              const SizedBox(width: Sp.x3),
+              TextButton(onPressed: onDismiss, child: const Text('Dismiss')),
+            ],
+          ),
         ],
       ),
     );
@@ -592,7 +644,9 @@ class TrainingSummaryCard extends StatelessWidget {
     final zoneMin = ((summary['zone_min'] as List?) ?? const [])
         .map((e) => (e as num).toDouble())
         .toList();
-    final zoneColors = [for (var i = 0; i < zoneMin.length; i++) AppColors.zone(i)];
+    final zoneColors = [
+      for (var i = 0; i < zoneMin.length; i++) AppColors.zone(i),
+    ];
     // Average strain / HR across done sessions in view.
     final strains = workouts
         .where((w) => (w as Map)['status'] != 'live')
@@ -623,8 +677,7 @@ class TrainingSummaryCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Expanded(
-                  child: TileHeader('Training · $range')),
+              Expanded(child: TileHeader('Training · $range')),
               InfoDot(
                 title: 'Training summary',
                 body:
@@ -660,34 +713,38 @@ class TrainingSummaryCard extends StatelessWidget {
             const SizedBox(height: Sp.x4),
             SegmentBar(zoneMin, zoneColors, height: 12),
             const SizedBox(height: Sp.x3),
-            Builder(builder: (context) {
-              final tone = ToneScope.of(context);
-              return Wrap(
-                spacing: Sp.x4,
-                runSpacing: Sp.x2,
-                children: [
-                  for (int i = 0; i < 5; i++)
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 9,
-                          height: 9,
-                          decoration: BoxDecoration(
-                            color: zoneColors[i],
-                            shape: BoxShape.circle,
+            Builder(
+              builder: (context) {
+                final tone = ToneScope.of(context);
+                return Wrap(
+                  spacing: Sp.x4,
+                  runSpacing: Sp.x2,
+                  children: [
+                    for (int i = 0; i < 5; i++)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 9,
+                            height: 9,
+                            decoration: BoxDecoration(
+                              color: zoneColors[i],
+                              shape: BoxShape.circle,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: Sp.x2),
-                        Text(
-                          'Z${i + 1} · ${zoneMin[i].round()}m',
-                          style: AppText.caption.copyWith(color: tone.fgMuted),
-                        ),
-                      ],
-                    ),
-                ],
-              );
-            }),
+                          const SizedBox(width: Sp.x2),
+                          Text(
+                            'Z${i + 1} · ${zoneMin[i].round()}m',
+                            style: AppText.caption.copyWith(
+                              color: tone.fgMuted,
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
+                );
+              },
+            ),
           ],
         ],
       ),
@@ -695,16 +752,24 @@ class TrainingSummaryCard extends StatelessWidget {
   }
 
   Widget _miniStat(BuildContext context, String v, String label) => Expanded(
-    child: Builder(builder: (context) {
-      final tone = ToneScope.of(context);
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(v, style: AppText.metricSm.copyWith(fontSize: 20, color: tone.fg)),
-          Text(label, style: AppText.captionMuted.copyWith(color: tone.fgMuted)),
-        ],
-      );
-    }),
+    child: Builder(
+      builder: (context) {
+        final tone = ToneScope.of(context);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              v,
+              style: AppText.metricSm.copyWith(fontSize: 20, color: tone.fg),
+            ),
+            Text(
+              label,
+              style: AppText.captionMuted.copyWith(color: tone.fgMuted),
+            ),
+          ],
+        );
+      },
+    ),
   );
 }
 
@@ -750,7 +815,8 @@ class WorkoutFeedCard extends StatelessWidget {
     final strain = (w['strain'] as num?);
     // Missing data = the joined 1 Hz HR is empty AND no strain was recorded
     // live (avg_hr alone also fires for pruned-but-real old workouts).
-    final noData = !live &&
+    final noData =
+        !live &&
         (((w['avg_hr'] as num?) ?? 0) == 0) &&
         (((w['strain'] as num?) ?? 0) == 0);
     final zoneMin = [
@@ -771,100 +837,113 @@ class WorkoutFeedCard extends StatelessWidget {
       padding: const EdgeInsets.all(Sp.x4),
       onTap: onTap,
       onLongPress: onLongPress,
-      child: Builder(builder: (context) {
-        final tone = ToneScope.of(context);
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  // Glyph: 10 + 18 + 10; art: 2 + 34 + 2 — same 38px chip.
-                  padding: EdgeInsets.all(
-                      workoutTypeOsIcon(w['type'] as String?) != null ? 2 : 10),
-                  decoration: BoxDecoration(
-                    color: tone.accent.withValues(alpha: live ? 0.22 : 0.12),
-                    borderRadius: BorderRadius.circular(R.chip),
-                  ),
-                  child: workoutTypeOsIcon(w['type'] as String?) != null
-                      ? OsAppIcon(workoutTypeOsIcon(w['type'] as String?)!, size: 34)
-                      : AppIcon(
-                          workoutTypeIcon(w['type'] as String?),
-                          size: 18,
-                          color: tone.accent,
-                        ),
-                ),
-                const SizedBox(width: Sp.x3),
-                Flexible(
-                  child: Text(
-                    workoutTypeLabel(w['type'] as String?),
-                    style: AppText.title.copyWith(color: tone.fg),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                if (live) ...[
-                  const SizedBox(width: Sp.x2),
-                  const StatusChip('LIVE', tone: ChipTone.accent),
-                ] else if (detected) ...[
-                  const SizedBox(width: Sp.x2),
-                  const Tag('auto'),
-                ],
-                const Spacer(),
-                AppIcon(OsIcon.arrowRight, size: 15, color: tone.fgFaint),
-              ],
-            ),
-            const SizedBox(height: Sp.x3),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(
-                  child: BigStat(
-                    value: hm(w['duration_min'] as num?),
-                    caption:
-                        '${_dayLabel(w['start_ts'] as int?)} · ${_clockLabel(w['start_ts'] as int?)}'
-                        '${avgHr != null && avgHr > 0 ? ' · $avgHr bpm' : ''}'
-                        '${kcal > 0 ? ' · $kcal kcal' : ''}',
-                  ),
-                ),
-                const SizedBox(width: Sp.x3),
-                if (!live && !detected)
-                  (noData
-                      ? Text('No data',
-                          style: AppText.captionMuted
-                              .copyWith(color: tone.fgMuted))
-                      : ArcGauge(
-                          value: strain == null
-                              ? double.nan
-                              : (strain / 21).clamp(0.0, 1.0).toDouble(),
-                          color: tone.accent,
-                          size: 54,
-                          stroke: 6,
-                          sweepFraction: 0.75,
-                          animate: false,
-                          center: Text(
-                            strain == null ? '—' : strain.toStringAsFixed(1),
-                            style: AppText.metricSm
-                                .copyWith(fontSize: 13, color: tone.fg),
-                          ),
-                        )),
-              ],
-            ),
-            if (hasZones) ...[
-              const SizedBox(height: Sp.x3),
-              SegmentBar(zoneMin, zoneColors, height: 8),
-            ],
-            if (pr) ...[
-              const SizedBox(height: Sp.x3),
+      child: Builder(
+        builder: (context) {
+          final tone = ToneScope.of(context);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Row(
                 children: [
-                  PrBadge(_isTopWorkout ? 'PR · top workout' : 'PR · most steps'),
+                  Container(
+                    // Glyph: 10 + 18 + 10; art: 2 + 34 + 2 — same 38px chip.
+                    padding: EdgeInsets.all(
+                      workoutTypeOsIcon(w['type'] as String?) != null ? 2 : 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: tone.accent.withValues(alpha: live ? 0.22 : 0.12),
+                      borderRadius: BorderRadius.circular(R.chip),
+                    ),
+                    child: workoutTypeOsIcon(w['type'] as String?) != null
+                        ? OsAppIcon(
+                            workoutTypeOsIcon(w['type'] as String?)!,
+                            size: 34,
+                          )
+                        : AppIcon(
+                            workoutTypeIcon(w['type'] as String?),
+                            size: 18,
+                            color: tone.accent,
+                          ),
+                  ),
+                  const SizedBox(width: Sp.x3),
+                  Flexible(
+                    child: Text(
+                      workoutTypeLabel(w['type'] as String?),
+                      style: AppText.title.copyWith(color: tone.fg),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (live) ...[
+                    const SizedBox(width: Sp.x2),
+                    const StatusChip('LIVE', tone: ChipTone.accent),
+                  ] else if (detected) ...[
+                    const SizedBox(width: Sp.x2),
+                    const Tag('auto'),
+                  ],
+                  const Spacer(),
+                  AppIcon(OsIcon.arrowRight, size: 15, color: tone.fgFaint),
                 ],
               ),
+              const SizedBox(height: Sp.x3),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: BigStat(
+                      value: hm(w['duration_min'] as num?),
+                      caption:
+                          '${_dayLabel(w['start_ts'] as int?)} · ${_clockLabel(w['start_ts'] as int?)}'
+                          '${avgHr != null && avgHr > 0 ? ' · $avgHr bpm' : ''}'
+                          '${kcal > 0 ? ' · $kcal kcal' : ''}',
+                    ),
+                  ),
+                  const SizedBox(width: Sp.x3),
+                  if (!live && !detected)
+                    (noData
+                        ? Text(
+                            'No data',
+                            style: AppText.captionMuted.copyWith(
+                              color: tone.fgMuted,
+                            ),
+                          )
+                        : ArcGauge(
+                            value: strain == null
+                                ? double.nan
+                                : (strain / 21).clamp(0.0, 1.0).toDouble(),
+                            color: tone.accent,
+                            size: 54,
+                            stroke: 6,
+                            sweepFraction: 0.75,
+                            animate: false,
+                            center: Text(
+                              strain == null ? '—' : strain.toStringAsFixed(1),
+                              style: AppText.metricSm.copyWith(
+                                fontSize: 13,
+                                color: tone.fg,
+                              ),
+                            ),
+                          )),
+                ],
+              ),
+              if (hasZones) ...[
+                const SizedBox(height: Sp.x3),
+                SegmentBar(zoneMin, zoneColors, height: 8),
+              ],
+              if (pr) ...[
+                const SizedBox(height: Sp.x3),
+                Row(
+                  children: [
+                    PrBadge(
+                      _isTopWorkout ? 'PR · top workout' : 'PR · most steps',
+                    ),
+                  ],
+                ),
+              ],
             ],
-          ],
-        );
-      }),
+          );
+        },
+      ),
     );
     if (entranceIndex == null) return card;
     return card.dsEnter(index: entranceIndex!);
@@ -918,9 +997,7 @@ class WorkoutDetailScreen extends StatelessWidget {
     return AppScaffold(
       title: 'Workout',
       largeTitle: false,
-      actions: [
-        RoundIconButton(OsIcon.trash, onTap: () => _delete(context)),
-      ],
+      actions: [RoundIconButton(OsIcon.trash, onTap: () => _delete(context))],
       body: _WorkoutDetailBody(id: id),
     );
   }
@@ -1063,14 +1140,16 @@ class WorkoutDetailContent extends StatelessWidget {
         (d['recovery_curve'] as List?)?.whereType<Map>().toList() ?? const [];
     final live = d['status'] == 'live';
     final strain = _n(d['strain']);
-    final noData = !live &&
+    final noData =
+        !live &&
         hrPoints.isEmpty &&
         (((d['avg_hr'] as num?) ?? 0) == 0) &&
         ((strain ?? 0) == 0);
     final startTs = d['start_ts'] as int?;
     final endTs = d['end_ts'] as int?;
     // Minute-level HR curve only for recent workouts; the summary is permanent.
-    final workoutRecent = startTs == null ||
+    final workoutRecent =
+        startTs == null ||
         startTs >
             (DateTime.now().millisecondsSinceEpoch ~/ 1000) -
                 kDetailWindowDays * 86400;
@@ -1080,6 +1159,18 @@ class WorkoutDetailContent extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(Sp.screen, Sp.x2, Sp.screen, Sp.x10),
       children: dsStaggered([
         _hero(live: live, strain: strain, noData: noData),
+        const SizedBox(height: Sp.x3),
+        SurfaceCard(
+          child: Text(
+            d['avg_hr'] == null
+                ? 'No saved HR readings for this workout. Re-analyze data can recover '
+                      'an average only if measurements from this time are stored.'
+                : 'Average based on ${d['hr_sample_count'] ?? 'saved'} recorded HR seconds'
+                      '${startTs != null && endTs != null && endTs > startTs && d['hr_sample_count'] is num ? ' (${((d['hr_sample_count'] as num) * 100 / (endTs - startTs + 1)).clamp(0, 100).toStringAsFixed(0)}% of the workout)' : ''}. '
+                      'Gaps are excluded.',
+            style: AppText.captionMuted,
+          ),
+        ),
 
         // ── ROUTE ── (run/ride/walk with recorded GPS)
         if (r != null && r.hasPath) ...[
@@ -1136,149 +1227,182 @@ class WorkoutDetailContent extends StatelessWidget {
       tone: BentoTone.ink,
       accent: DomainAccent.strain,
       padding: const EdgeInsets.all(Sp.x5),
-      child: Builder(builder: (context) {
-        final tone = ToneScope.of(context);
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  // Glyph: 10 + 20 + 10; art: 2 + 36 + 2 — same 40px chip.
-                  padding: EdgeInsets.all(
-                      workoutTypeOsIcon(d['type'] as String?) != null ? 2 : 10),
-                  decoration: BoxDecoration(
-                    color: tone.accent.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(R.chip),
-                  ),
-                  child: workoutTypeOsIcon(d['type'] as String?) != null
-                      ? OsAppIcon(workoutTypeOsIcon(d['type'] as String?)!, size: 36)
-                      : AppIcon(
-                          workoutTypeIcon(d['type'] as String?),
-                          size: 20,
-                          color: tone.accent,
-                        ),
-                ),
-                const SizedBox(width: Sp.x3),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        workoutTypeLabel(d['type'] as String?).toUpperCase(),
-                        style: AppText.overline.copyWith(color: tone.fgFaint),
-                      ),
-                      Text(
-                        _whenLabel(d['start_ts'] as int?),
-                        style: AppText.captionMuted.copyWith(color: tone.fgMuted),
-                      ),
-                    ],
-                  ),
-                ),
-                if (d['source'] == 'auto') const Tag('auto'),
-                if (live) ...[
-                  const SizedBox(width: Sp.x2),
-                  const StatusChip('LIVE', tone: ChipTone.accent),
-                ],
-                if (onCorrectType != null) ...[
-                  const SizedBox(width: Sp.x2),
-                  Pressable(
-                    pressedScale: 0.9,
-                    onTap: onCorrectType,
-                    child: Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: AppIcon(OsIcon.edit, size: 16, color: tone.fgMuted),
+      child: Builder(
+        builder: (context) {
+          final tone = ToneScope.of(context);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    // Glyph: 10 + 20 + 10; art: 2 + 36 + 2 — same 40px chip.
+                    padding: EdgeInsets.all(
+                      workoutTypeOsIcon(d['type'] as String?) != null ? 2 : 10,
                     ),
-                  ),
-                ],
-              ],
-            ),
-            const SizedBox(height: Sp.x5),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        hm(d['duration_min'] as num?),
-                        style: AppText.hero
-                            .copyWith(fontSize: 48, color: tone.fg),
-                        maxLines: 1,
-                      ),
-                      const SizedBox(height: Sp.x1),
-                      Row(
-                        children: [
-                          Text('DURATION',
-                              style: AppText.overline
-                                  .copyWith(color: tone.fgFaint)),
-                          InfoDot(
-                            title: 'Strain',
-                            body:
-                                'Cardiovascular load for this session on a 0–21 '
-                                'scale, from time spent in your heart-rate zones.',
-                            methodNote:
-                                'Banister/Edwards TRIMP, squashed to 0–21',
+                    decoration: BoxDecoration(
+                      color: tone.accent.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(R.chip),
+                    ),
+                    child: workoutTypeOsIcon(d['type'] as String?) != null
+                        ? OsAppIcon(
+                            workoutTypeOsIcon(d['type'] as String?)!,
+                            size: 36,
+                          )
+                        : AppIcon(
+                            workoutTypeIcon(d['type'] as String?),
+                            size: 20,
+                            color: tone.accent,
                           ),
-                        ],
-                      ),
-                    ],
                   ),
-                ),
-                if (strain != null && !noData)
-                  ArcGauge(
-                    value: (strain / 21).clamp(0.0, 1.0).toDouble(),
-                    color: tone.accent,
-                    size: 96,
-                    stroke: 10,
-                    sweepFraction: 0.75,
-                    endDot: true,
-                    center: Column(
-                      mainAxisSize: MainAxisSize.min,
+                  const SizedBox(width: Sp.x3),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(strain.toStringAsFixed(1),
-                            style: AppText.metricSm
-                                .copyWith(fontSize: 20, color: tone.fg)),
-                        Text('STRAIN',
-                            style: AppText.overline.copyWith(
-                                fontSize: 8, color: tone.fgFaint)),
+                        Text(
+                          workoutTypeLabel(d['type'] as String?).toUpperCase(),
+                          style: AppText.overline.copyWith(color: tone.fgFaint),
+                        ),
+                        Text(
+                          _whenLabel(d['start_ts'] as int?),
+                          style: AppText.captionMuted.copyWith(
+                            color: tone.fgMuted,
+                          ),
+                        ),
                       ],
                     ),
                   ),
+                  if (d['source'] == 'auto') const Tag('auto'),
+                  if (live) ...[
+                    const SizedBox(width: Sp.x2),
+                    const StatusChip('LIVE', tone: ChipTone.accent),
+                  ],
+                  if (onCorrectType != null) ...[
+                    const SizedBox(width: Sp.x2),
+                    Pressable(
+                      pressedScale: 0.9,
+                      onTap: onCorrectType,
+                      child: Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: AppIcon(
+                          OsIcon.edit,
+                          size: 16,
+                          color: tone.fgMuted,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: Sp.x5),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          hm(d['duration_min'] as num?),
+                          style: AppText.hero.copyWith(
+                            fontSize: 48,
+                            color: tone.fg,
+                          ),
+                          maxLines: 1,
+                        ),
+                        const SizedBox(height: Sp.x1),
+                        Row(
+                          children: [
+                            Text(
+                              'DURATION',
+                              style: AppText.overline.copyWith(
+                                color: tone.fgFaint,
+                              ),
+                            ),
+                            InfoDot(
+                              title: 'Strain',
+                              body:
+                                  'Cardiovascular load for this session on a 0–21 '
+                                  'scale, from time spent in your heart-rate zones.',
+                              methodNote:
+                                  'Banister/Edwards TRIMP, squashed to 0–21',
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (strain != null && !noData)
+                    ArcGauge(
+                      value: (strain / 21).clamp(0.0, 1.0).toDouble(),
+                      color: tone.accent,
+                      size: 96,
+                      stroke: 10,
+                      sweepFraction: 0.75,
+                      endDot: true,
+                      center: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            strain.toStringAsFixed(1),
+                            style: AppText.metricSm.copyWith(
+                              fontSize: 20,
+                              color: tone.fg,
+                            ),
+                          ),
+                          Text(
+                            'STRAIN',
+                            style: AppText.overline.copyWith(
+                              fontSize: 8,
+                              color: tone.fgFaint,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+              if (noData) ...[
+                const SizedBox(height: Sp.x3),
+                Row(
+                  children: [
+                    const StatusChip('No heart-rate data', tone: ChipTone.warn),
+                    InfoDot(
+                      title: 'No heart-rate data',
+                      body:
+                          'The band wasn\'t syncing during this window, so strain '
+                          'and zones can\'t be computed for this workout.',
+                    ),
+                  ],
+                ),
               ],
-            ),
-            if (noData) ...[
-              const SizedBox(height: Sp.x3),
+              const SizedBox(height: Sp.x4),
               Row(
                 children: [
-                  const StatusChip('No heart-rate data', tone: ChipTone.warn),
-                  InfoDot(
-                    title: 'No heart-rate data',
-                    body:
-                        'The band wasn\'t syncing during this window, so strain '
-                        'and zones can\'t be computed for this workout.',
+                  _toneStat(
+                    tone,
+                    noData ? '—' : '${d['avg_hr'] ?? '—'}',
+                    'avg bpm',
                   ),
+                  _toneStat(
+                    tone,
+                    noData ? '—' : '${d['max_hr'] ?? '—'}',
+                    'max bpm',
+                  ),
+                  _toneStat(tone, '${d['calories'] ?? 0}', 'kcal'),
+                  if (distanceLabel != null)
+                    _toneStat(tone, distanceLabel!, 'distance')
+                  // Steps are recorded only for manual workouts ridden by the live
+                  // 100 Hz stream; older/auto sessions have none.
+                  else if (steps > 0)
+                    _toneStat(tone, '$steps', 'steps'),
                 ],
               ),
             ],
-            const SizedBox(height: Sp.x4),
-            Row(
-              children: [
-                _toneStat(tone, noData ? '—' : '${d['avg_hr'] ?? '—'}', 'avg bpm'),
-                _toneStat(tone, noData ? '—' : '${d['max_hr'] ?? '—'}', 'max bpm'),
-                _toneStat(tone, '${d['calories'] ?? 0}', 'kcal'),
-                if (distanceLabel != null)
-                  _toneStat(tone, distanceLabel!, 'distance')
-                // Steps are recorded only for manual workouts ridden by the live
-                // 100 Hz stream; older/auto sessions have none.
-                else if (steps > 0)
-                  _toneStat(tone, '$steps', 'steps'),
-              ],
-            ),
-          ],
-        );
-      }),
+          );
+        },
+      ),
     );
   }
 

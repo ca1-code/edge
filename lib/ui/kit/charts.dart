@@ -229,6 +229,8 @@ class MiniBars extends StatelessWidget {
 /// [onTapBar] makes a bar tappable (drill-down in the Metric Explorer).
 class LabeledBars extends StatelessWidget {
   final List<double> values;
+  /// Distinguishes a measured zero from an absent value in sparse trends.
+  final List<bool>? present;
   final List<String> labels;
   final Color? color;
   final double height;
@@ -240,6 +242,7 @@ class LabeledBars extends StatelessWidget {
     super.key,
     required this.values,
     required this.labels,
+    this.present,
     this.color,
     this.height = 200,
     this.highlight,
@@ -276,7 +279,11 @@ class LabeledBars extends StatelessWidget {
                     children: [
                       if (showValues)
                         Text(
-                          _fmt(values[i]),
+                          present != null && !present![i]
+                              ? '—'
+                              : present != null && values[i] == 0
+                              ? '0'
+                              : _fmt(values[i]),
                           style: AppText.caption.copyWith(
                             fontWeight: FontWeight.w600,
                             color: (highlight == null || highlight == i)
@@ -291,9 +298,12 @@ class LabeledBars extends StatelessWidget {
                         child: TweenAnimationBuilder<double>(
                           duration: Motion.med,
                           curve: Motion.emphatic,
-                          tween: Tween(begin: 0, end: values[i] / maxV),
+                          tween: Tween(begin: 0,
+                              end: present != null && !present![i]
+                                  ? 0 : values[i] / maxV),
                           builder: (_, v, _) => FractionallySizedBox(
-                            heightFactor: v.clamp(0.02, 1.0),
+                            heightFactor: present != null && !present![i]
+                                ? 0 : v.clamp(0.02, 1.0),
                             alignment: Alignment.bottomCenter,
                             child: Container(
                               decoration: BoxDecoration(

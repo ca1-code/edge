@@ -56,7 +56,7 @@ class HeartScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => MetricScreen(icon: OsIcon.activity, 
     title: 'Heart',
-    metric: 'resting_hr',
+    metric: 'hr',
     accent: DomainAccent.heart,
     todayDetail: (ctx) => Column(
       crossAxisAlignment: CrossAxisAlignment.start,

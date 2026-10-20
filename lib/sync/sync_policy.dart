@@ -140,7 +140,8 @@ class ClockPolicy {
   }) {
     if (deviceClock == null || clockWall == null) return null;
     final offset = clockWall - deviceClock;
-    if (offset.abs() <= 86400) return null; // sub-day drift — don't manufacture a fix
+    if (offset.abs() <= 86400)
+      return null; // sub-day drift — don't manufacture a fix
     var corrected = recTs + offset;
     // Snap FIRST, then clamp: snapping down can only lower the value, so a value
     // that was <= now stays <= now, and we still guard the post-snap result.
@@ -237,6 +238,9 @@ class BackfillContinuation {
     if (!stillConnected) return false;
     if (consecutiveCount >= maxAutoContinues) return false;
     if (!lastTrimAdvanced) return false;
+    // Console/event chunks advance their own cursor too. They do not prove
+    // health-record progress; retry them on the normal schedule, not a loop.
+    if (rowsPersistedThisSession <= 0) return false;
     if (strapNewestTs != null && ourFrontierTs != null) {
       if ((strapNewestTs - ourFrontierTs) > behindGapSeconds) return true;
     }

@@ -39,7 +39,7 @@ enum AccessorySetup {
     channel.setMethodCallHandler { call, result in
       switch call.method {
       case "isSupported":
-        if #available(iOS 18.0, *) { result(true) } else { result(false) }
+        result(false)  // classic-BLE build: use the plain scan flow
 
       case "provisionedId":
         if #available(iOS 18.0, *) {

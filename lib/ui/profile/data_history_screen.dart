@@ -7,6 +7,8 @@ import '../../state/app_state.dart';
 import '../../theme/theme.dart';
 import '../../theme/tokens.dart';
 import '../kit/kit.dart';
+import '../design/design.dart' show AppScaffold;
+import '../screens/detail_cards.dart' show HeartDayCard;
 
 class DataHistoryScreen extends StatefulWidget {
   const DataHistoryScreen({super.key});
@@ -145,7 +147,11 @@ class _DataHistoryScreenState extends State<DataHistoryScreen> {
   Widget build(BuildContext context) {
     final selected = _selected.length;
     final rawDays = _days
-        .where((d) => ((d['raw_count'] as int?) ?? 0) > 0)
+        .where(
+          (d) =>
+              ((d['raw_count'] as int?) ?? 0) > 0 ||
+              ((d['live_count'] as int?) ?? 0) > 0,
+        )
         .length;
     final derivedDays = _days.where((d) => d['has_derived'] == true).length;
     return Scaffold(
@@ -173,7 +179,10 @@ class _DataHistoryScreenState extends State<DataHistoryScreen> {
                     children: [
                       Text('Data history', style: AppText.h1),
                       const SizedBox(height: 2),
-                      Text('Manage your local data', style: AppText.caption),
+                      Text(
+                        'Open a saved day to review its measurements',
+                        style: AppText.caption,
+                      ),
                     ],
                   ),
                 ),
@@ -300,7 +309,10 @@ class _DataHistoryScreenState extends State<DataHistoryScreen> {
     final dayId = row['day_id'] as String;
     final selected = _selected.contains(dayId);
     final rawCount = (row['raw_count'] as int?) ?? 0;
+    final liveCount = (row['live_count'] as int?) ?? 0;
     final hasDerived = row['has_derived'] == true;
+    final failed = row['analysis_failed'] == true;
+    final partial = row['analysis_partial'] == true;
     final finalized = ((row['finalized'] as int?) ?? 0) == 1;
     return ProCard(
       onTap: () => setState(() {
@@ -333,13 +345,19 @@ class _DataHistoryScreenState extends State<DataHistoryScreen> {
                     Expanded(child: Text(dayId, style: AppText.title)),
                     if (hasDerived)
                       _pill(
-                        finalized ? 'Finalized' : 'Derived',
+                        partial ? 'Partial analysis' : 'Analyzed',
                         finalized ? AppColors.goodSoft : AppColors.coralSoft,
                         finalized ? AppColors.good : AppColors.coralDeep,
                       )
                     else
                       _pill(
-                        rawCount > 0 ? 'Raw only' : 'Empty',
+                        failed
+                            ? 'Analysis failed'
+                            : liveCount > 0
+                            ? 'Recorded HR'
+                            : rawCount > 0
+                            ? 'Needs analysis'
+                            : 'Summary only',
                         AppColors.surfaceAlt,
                         AppColors.inkMuted,
                       ),
@@ -350,7 +368,15 @@ class _DataHistoryScreenState extends State<DataHistoryScreen> {
                   spacing: Sp.x3,
                   runSpacing: Sp.x2,
                   children: [
-                    Text('Raw $rawCount', style: AppText.captionMuted),
+                    Text(
+                      'Sensor samples $rawCount',
+                      style: AppText.captionMuted,
+                    ),
+                    if (liveCount > 0)
+                      Text(
+                        'Live HR readings $liveCount',
+                        style: AppText.captionMuted,
+                      ),
                     Text(
                       'Span ${_fmtTs((row['min_rec_ts'] as num?)?.toInt())}–${_fmtTs((row['max_rec_ts'] as num?)?.toInt())}',
                       style: AppText.captionMuted,
@@ -364,10 +390,24 @@ class _DataHistoryScreenState extends State<DataHistoryScreen> {
                       style: AppText.captionMuted,
                     ),
                     Text(
-                      'Computed ${_fmtComputed((row['computed_at'] as num?)?.toInt())}',
+                      'Analyzed ${_fmtComputed((row['computed_at'] as num?)?.toInt())}',
                       style: AppText.captionMuted,
                     ),
                   ],
+                ),
+                const SizedBox(height: Sp.x2),
+                TextButton.icon(
+                  icon: const Icon(Icons.favorite_outline, size: 18),
+                  label: const Text('View heart rate'),
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => AppScaffold(
+                        title: 'Heart rate',
+                        subtitle: dayId,
+                        children: [HeartDayCard(date: dayId)],
+                      ),
+                    ),
+                  ),
                 ),
               ],
             ),

@@ -36,6 +36,7 @@
 // bursts), so the compute trigger survives the move to continuous listening.
 
 import 'dart:async';
+import 'history_range.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -163,8 +164,7 @@ bool burstPacketCountMatches({
   required int expectedPacketCount,
   required int actualBurstPacketCount,
   required int droppedThisBurst,
-}) =>
-    expectedPacketCount == actualBurstPacketCount + droppedThisBurst;
+}) => expectedPacketCount == actualBurstPacketCount + droppedThisBurst;
 
 /// Fired for every LIVE high-rate frame (0x28/0x2B/0x33). These are EPHEMERAL —
 /// they are NOT persisted to raw_records (that bloated storage ~50x and stalled
@@ -301,6 +301,7 @@ class _Session {
     asm['events'] = FrameReassembler(profile: b);
     asm['data'] = FrameReassembler(profile: b);
   }
+
   final List<StreamSubscription> subs = [];
   Timer? heartbeat;
   // Session-owned timers; a disconnect cancels them.
@@ -453,12 +454,12 @@ class BleEngine {
       }
       _log('preempting a background drain to take the foreground session.');
       try {
-        await other
-            .disconnect()
-            .timeout(const Duration(seconds: 10));
+        await other.disconnect().timeout(const Duration(seconds: 10));
       } on TimeoutException {
-        _log('preempted engine teardown timed out after 10s — proceeding '
-            'with the foreground connect anyway.');
+        _log(
+          'preempted engine teardown timed out after 10s — proceeding '
+          'with the foreground connect anyway.',
+        );
       } catch (e) {
         _log('preempted engine teardown failed ($e) — proceeding.');
       }
@@ -547,8 +548,10 @@ class BleEngine {
       _log('autoConnect arm failed: $e');
       return false;
     }
-    _log('OS autoConnect armed for $remoteId — waiting (max '
-        '${wait.inMinutes} min) for the band to reappear.');
+    _log(
+      'OS autoConnect armed for $remoteId — waiting (max '
+      '${wait.inMinutes} min) for the band to reappear.',
+    );
     final done = Completer<bool>();
     final sub = device.connectionState.listen((s) {
       if (s == BluetoothConnectionState.connected && !done.isCompleted) {
@@ -583,8 +586,9 @@ class BleEngine {
   // Historical-offload bookkeeping. A controller is live for the whole connection
   // (we keep ACKing HISTORY_END markers as they arrive, even after the first
   // HISTORY_COMPLETE — a later strap-triggered offload reuses it).
-  _DrainController? _drain;
+  HistoricalDrainController? _drain;
   bool _liveEnabled = false;
+  int? _lastStoredLiveHrSecond;
   // Background live downgrade: only the compact realtime-HR stream is armed
   // (no high-rate R10/R11 + IMU + optical flood). Set by [enableHrOnlyLive].
   bool _liveHrOnly = false;
@@ -689,7 +693,8 @@ class BleEngine {
   // rather than only as a single overwritten sync_ledger row. Pure
   // observability — does NOT gate or retry anything.
   int _burstMismatchTotal = 0; // across the engine's lifetime
-  int _burstMismatchStreak = 0; // consecutive mismatched bursts, reset by connect + by a clean burst
+  int _burstMismatchStreak =
+      0; // consecutive mismatched bursts, reset by connect + by a clean burst
   // Per-revision packet accounting for the historical drain (gap detection +
   // honest per-version counts surfaced to the debug screens).
   final Map<int, int> _historicalVersionCounts = <int, int>{};
@@ -892,21 +897,31 @@ class BleEngine {
     final sub = FlutterBluePlus.onScanResults.listen((results) {
       for (final r in results) {
         final name = r.device.platformName.toLowerCase();
+        final advName = r.advertisementData.advName.toLowerCase();
         final advNames = r.advertisementData.serviceUuids.map(
           (g) => g.str.toLowerCase(),
         );
         if (found == null &&
             (name.contains('whoop') ||
-                advNames.any((s) =>
-                    s.startsWith('61080001') || s.startsWith('fd4b0001')))) {
+                advName.contains('whoop') ||
+                advNames.any(
+                  (s) => s.startsWith('61080001') || s.startsWith('fd4b0001'),
+                ))) {
           found = r.device;
           FlutterBluePlus.stopScan();
         }
       }
     });
     try {
-      await FlutterBluePlus.startScan(
-          withServices: [gen4Svc, gen5Svc], timeout: timeout);
+      if (Platform.isIOS || Platform.isMacOS) {
+        // WHOOP 5 advertises its name but not always its service UUID.
+        await FlutterBluePlus.startScan(timeout: timeout);
+      } else {
+        await FlutterBluePlus.startScan(
+          withServices: [gen4Svc, gen5Svc],
+          timeout: timeout,
+        );
+      }
       await FlutterBluePlus.isScanning.where((on) => on == false).first;
     } catch (e) {
       _log('scan error: $e');
@@ -1009,9 +1024,11 @@ class BleEngine {
           // silently dropped, no INIT flood, "connected but nothing happens").
           // Log loudly and surface the re-pair diagnostic on engine state so
           // the UI can point the user at the fix instead of a dead session.
-          _log('BOND FAILED: $e — encrypted commands will be silently dropped '
-              'by the band. Remove the bond in system Bluetooth settings and '
-              're-pair.');
+          _log(
+            'BOND FAILED: $e — encrypted commands will be silently dropped '
+            'by the band. Remove the bond in system Bluetooth settings and '
+            're-pair.',
+          );
           state.needsRepairGuide = true;
           state.bondRefusals++;
           // After a run of consecutive refusals, stop the auto-reconnect loop
@@ -1020,8 +1037,10 @@ class BleEngine {
           // user connect still runs createBond, so a successful re-pair recovers.
           if (_bondGiveUp.bondRefused()) {
             state.autoReconnectPaused = true;
-            _log('[RECONNECT] bond-refusal give-up (${_bondGiveUp.consecutive}) '
-                '— pausing auto-reconnect; re-pair required.');
+            _log(
+              '[RECONNECT] bond-refusal give-up (${_bondGiveUp.consecutive}) '
+              '— pausing auto-reconnect; re-pair required.',
+            );
           }
           onState(state);
         }
@@ -1046,9 +1065,9 @@ class BleEngine {
       }
 
       _setPhase(BleConnState.discovering);
-      final services = await device
-          .discoverServices()
-          .timeout(_serviceDiscoveryTimeout);
+      final services = await device.discoverServices().timeout(
+        _serviceDiscoveryTimeout,
+      );
       // Pin the generation from whichever service the peripheral exposes:
       // gen4 "Harvard" 6108xxxx, or gen5 "fd4b" fd4bxxxx. This drives the frame
       // header/CRC, command envelope, ACK, and record decode for the session.
@@ -1068,13 +1087,17 @@ class BleEngine {
         }
       }
       if (svc == null) {
-        _log('No WHOOP service (gen4 6108xxxx / gen5 fd4bxxxx) found on device.');
+        _log(
+          'No WHOOP service (gen4 6108xxxx / gen5 fd4bxxxx) found on device.',
+        );
         await _teardownSession(intentional: true);
         _setPhase(BleConnState.idle);
         return false;
       }
       session.applyBand(band);
-      _log('Detected ${band.isGen5 ? "WHOOP 5 (gen5)" : "WHOOP 4 (gen4)"} link.');
+      _log(
+        'Detected ${band.isGen5 ? "WHOOP 5 (gen5)" : "WHOOP 4 (gen4)"} link.',
+      );
       final gatt = band.gatt;
       BluetoothCharacteristic? find(String prefix) {
         for (final c in svc!.characteristics) {
@@ -1091,7 +1114,9 @@ class BleEngine {
           cmdFrom == null ||
           events == null ||
           data == null) {
-        _log('Missing one or more ${band.isGen5 ? "fd4b" : "Harvard"} characteristics.');
+        _log(
+          'Missing one or more ${band.isGen5 ? "fd4b" : "Harvard"} characteristics.',
+        );
         await _teardownSession(intentional: true);
         _setPhase(BleConnState.idle);
         return false;
@@ -1134,8 +1159,9 @@ class BleEngine {
       _bondTime = DateTime.now();
       // Fresh record gate, seeded from the durable high-water so the stuck/
       // continuation detectors are correct on the first offload after a restart.
-      _recordGate =
-          RecordGate(frontierTs: (await cursorReader?.call('rec_ts_hw')) ?? 0);
+      _recordGate = RecordGate(
+        frontierTs: (await cursorReader?.call('rec_ts_hw')) ?? 0,
+      );
       // Re-seed the counter-regression watch from the durable counter_hw
       // cursor so a reboot is caught even across the reconnect it usually
       // causes, instead of only within a single unbroken connection.
@@ -1172,7 +1198,7 @@ class BleEngine {
       // fire INIT — which triggers the historical flood. Historical + live records
       // then arrive on the same subscription; HISTORY_END markers are committed
       // (raw+samples+cursor, atomically) BEFORE we ACK, so the offload is resumable.
-      _drain = _DrainController(
+      _drain = HistoricalDrainController(
         onRecord: _storeRecord,
         onRecordsBatch: onRecordsBatch == null ? null : _storeRecordsBatch,
         onCommit: onCommitBatch == null ? null : _commitBatch,
@@ -1219,9 +1245,10 @@ class BleEngine {
     // gets an independent periodic GET_CLOCK; the existing clock_epoch
     // response handler does the actual drift comparison + bounded re-issue.
     final lastVerify = _lastClockVerifyAt;
-    if (lastVerify == null ||
-        DateTime.now().difference(lastVerify).inSeconds >=
-            kRtcReverifyIntervalSeconds) {
+    if (!session.band.isGen5 &&
+        (lastVerify == null ||
+            DateTime.now().difference(lastVerify).inSeconds >=
+                kRtcReverifyIntervalSeconds)) {
       _lastClockVerifyAt = DateTime.now();
       _log('[SYNC] Periodic RTC re-verify (long-lived connection).');
       unawaited(getClock());
@@ -1481,8 +1508,10 @@ class BleEngine {
       if (await _write(ack)) return true;
       failures++;
       if (!ackRetryPolicy.shouldRetry(failures)) return false;
-      _log('[SYNC] batch-ACK write failed (attempt $failures/'
-          '${ackRetryPolicy.maxAttempts}) — retrying.');
+      _log(
+        '[SYNC] batch-ACK write failed (attempt $failures/'
+        '${ackRetryPolicy.maxAttempts}) — retrying.',
+      );
       await Future.delayed(ackRetryPolicy.delayFor(failures));
       if (_session?.connected != true) return false;
     }
@@ -1494,7 +1523,11 @@ class BleEngine {
       return;
     }
     final frame = buildCommand(
-        _seq.nextLive(), opcode, payload, _session?.band ?? BandProfile.gen4);
+      _seq.nextLive(),
+      opcode,
+      payload,
+      _session?.band ?? BandProfile.gen4,
+    );
     await _write(frame);
   }
 
@@ -1505,8 +1538,7 @@ class BleEngine {
   // gen5 link. (_send already frames with the session's BandProfile.)
   List<int> get _offloadPayload =>
       (_session?.band.isGen5 ?? false) ? const <int>[] : const <int>[0x00];
-  Future<void> _sendGetDataRange() =>
-      _send(Cmd.getDataRange, _offloadPayload);
+  Future<void> _sendGetDataRange() => _send(Cmd.getDataRange, _offloadPayload);
   Future<void> _sendHistoricalData() =>
       _send(Cmd.sendHistoricalData, _offloadPayload);
 
@@ -1664,7 +1696,10 @@ class BleEngine {
     } else if (pt == PacketType.consoleLogs && _offloadActive) {
       _drain?.onBurstConsole();
     }
-    final decoded = _maybeAugmentDataRange(frame, decodeFrame(frame));
+    final decoded = _maybeAugmentDataRange(
+      frame,
+      decodeFrame(frame, profile: _session?.band ?? BandProfile.gen4),
+    );
     _absorbState(decoded);
   }
 
@@ -1741,9 +1776,21 @@ class BleEngine {
       // gen5 (WHOOP 5) thin 1 Hz record: HR + timing only. Motion (K10/K21) and
       // any unknown kind return null → archived to raw_archive below, exactly
       // like an undecodable gen4 record. No accel/spo2/temp is fabricated.
-      final r = parseGen5Record(frame.inner);
-      if (r != null) {
-        sample = Sample(tsEpoch: r.tsEpoch, counter: r.counter, hr: r.hr);
+      // v18 is WHOOP 5's per-second biometric summary. Carry its gravity
+      // vector through because sleep/workout motion derivation consumes it.
+      final r = parseGen5Historical(frame.inner);
+      if (r is Gen5HistorySample) {
+        final g = r.gravityG;
+        sample = Sample(
+          tsEpoch: r.unix,
+          counter: r.recordIndex,
+          hr: r.heartRate,
+          rrIntervalsMs: List<int>.from(r.rrIntervalsMs),
+          ax: g.isNotEmpty ? g[0] : null,
+          ay: g.length > 1 ? g[1] : null,
+          az: g.length > 2 ? g[2] : null,
+          isGen5: true,
+        );
       }
     } else if (recType == Record.r24 || recType == Record.r12) {
       // Legacy decoder first, firmware-fallback chain second, undecodable
@@ -1951,6 +1998,16 @@ class BleEngine {
       if (hr > 0) {
         state.liveHr = hr;
         state.liveHrAt = DateTime.now().millisecondsSinceEpoch;
+        final receivedSec = state.liveHrAt! ~/ 1000;
+        if (receivedSec != _lastStoredLiveHrSecond) {
+          _lastStoredLiveHrSecond = receivedSec;
+          unawaited(
+            LocalDb.recordLiveHeartRate(
+              receivedSec,
+              hr,
+            ).catchError((Object e) => _log('Live HR persistence failed: $e')),
+          );
+        }
         state.wristOn = (f['wearing'] as bool?) ?? state.wristOn;
         onState(state);
       }
@@ -2085,7 +2142,8 @@ class BleEngine {
       // see RecordGate.admit) never reach onHistoricalRecord/
       // onUndecodableRecord, so they never entered currentBurstPacketCount.
       final droppedThisBurst = _recordGate.dropped - _burstDroppedAtStart;
-      final validated = expected == null ||
+      final validated =
+          expected == null ||
           d.validateBurst(
             expectedPacketCount: expected,
             droppedThisBurst: droppedThisBurst,
@@ -2118,19 +2176,21 @@ class BleEngine {
           'traffic=${d.currentBurstTrafficCount}, '
           'breakdown=${d.currentBurstBreakdown}',
         );
-        await _bestEffortLedgerWrite(() => LocalDb.upsertSyncLedgerEntry(
-          status: 'validated_with_mismatch',
-          lastError: 'burst_packet_mismatch',
-          metaPatch: {
-            'expected_burst_packets': expected,
-            'actual_burst_packets': d.currentBurstPacketCount,
-            'dropped_this_burst': droppedThisBurst,
-            'historical_burst_packets': d.currentBurstHistoricalPacketCount,
-            'traffic_burst_packets': d.currentBurstTrafficCount,
-            'burst_validation_failures': d.consecutiveValidationFailures,
-            'burst_breakdown': d.currentBurstBreakdown,
-          },
-        ));
+        await _bestEffortLedgerWrite(
+          () => LocalDb.upsertSyncLedgerEntry(
+            status: 'validated_with_mismatch',
+            lastError: 'burst_packet_mismatch',
+            metaPatch: {
+              'expected_burst_packets': expected,
+              'actual_burst_packets': d.currentBurstPacketCount,
+              'dropped_this_burst': droppedThisBurst,
+              'historical_burst_packets': d.currentBurstHistoricalPacketCount,
+              'traffic_burst_packets': d.currentBurstTrafficCount,
+              'burst_validation_failures': d.consecutiveValidationFailures,
+              'burst_breakdown': d.currentBurstBreakdown,
+            },
+          ),
+        );
       } else {
         _burstMismatchStreak = 0;
       }
@@ -2152,9 +2212,19 @@ class BleEngine {
       // once the ACK is link-layer confirmed, so a crash before the ACK
       // re-delivers the chunk. Echo the 8-byte slice the band acks verbatim —
       // a mangled echo is the "Groundhog Day" re-flood bug.
-      await d.commit(m.token); // raw + samples + strap_trim cursor, atomic
-      final ack = buildHistoryResultOk(_seq.nextSync(), m.token!,
-          profile: _session?.band ?? BandProfile.gen4);
+      try {
+        await d.commit(m.token);
+      } catch (e) {
+        _log('[SYNC] History commit failed; ACK withheld: $e');
+        await _teardownSession(intentional: false);
+        _setPhase(BleConnState.idle);
+        return;
+      } // raw + samples + strap_trim cursor, atomic
+      final ack = buildHistoryResultOk(
+        _seq.nextSync(),
+        m.token!,
+        profile: _session?.band ?? BandProfile.gen4,
+      );
       _log(
         '[SYNC] ACK frame='
         '${ack.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}',
@@ -2175,27 +2245,31 @@ class BleEngine {
         // visibility, plus an explicit quarantine escalation once the SAME
         // token has failed enough times to be a real, diagnosable problem.
         final failCount = _chunkFailures.recordFailure(tokenHex);
-        await _bestEffortLedgerWrite(() => LocalDb.upsertSyncLedgerEntry(
-          chunkId: 'batch:$tokenHex',
-          kind: 'historical_batch',
-          status: 'ack_failed',
-          lastError: 'ack_write_exhausted',
-          metaPatch: {
-            'batch_id': m.batchId,
-            'records': d.records,
-            'ack_failures': failCount,
-          },
-        ));
-        if (_chunkFailures.shouldQuarantine(tokenHex)) {
-          await _bestEffortLedgerWrite(() => LocalDb.quarantineSyncChunk(
+        await _bestEffortLedgerWrite(
+          () => LocalDb.upsertSyncLedgerEntry(
+            chunkId: 'batch:$tokenHex',
             kind: 'historical_batch',
-            payloadJson: jsonEncode({
-              'token': tokenHex,
+            status: 'ack_failed',
+            lastError: 'ack_write_exhausted',
+            metaPatch: {
               'batch_id': m.batchId,
+              'records': d.records,
               'ack_failures': failCount,
-            }),
-            reason: 'persistent_ack_failure',
-          ));
+            },
+          ),
+        );
+        if (_chunkFailures.shouldQuarantine(tokenHex)) {
+          await _bestEffortLedgerWrite(
+            () => LocalDb.quarantineSyncChunk(
+              kind: 'historical_batch',
+              payloadJson: jsonEncode({
+                'token': tokenHex,
+                'batch_id': m.batchId,
+                'ack_failures': failCount,
+              }),
+              reason: 'persistent_ack_failure',
+            ),
+          );
           _log(
             '[SYNC] Batch token=$tokenHex has failed ACK $failCount times '
             'across reconnects — quarantined for diagnosis. Data is safe '
@@ -2203,10 +2277,12 @@ class BleEngine {
             'been told to trim, so it keeps re-sending the same batch.',
           );
         }
-        _log('[SYNC] BATCH-ACK FAILED after '
-            '${ackRetryPolicy.maxAttempts} attempts (token=$tokenHex, '
-            'failures_for_this_token=$failCount) — bouncing the link; data '
-            'is committed and the band will re-send.');
+        _log(
+          '[SYNC] BATCH-ACK FAILED after '
+          '${ackRetryPolicy.maxAttempts} attempts (token=$tokenHex, '
+          'failures_for_this_token=$failCount) — bouncing the link; data '
+          'is committed and the band will re-send.',
+        );
         unawaited(
           _teardownSession(intentional: false).then((_) {
             _setPhase(BleConnState.idle); // caller's reconnect loop takes over
@@ -2216,30 +2292,31 @@ class BleEngine {
       }
       _chunkFailures.recordSuccess(tokenHex);
       d.noteBatchAcked(); // ACKed and KEEP listening
-      await _bestEffortLedgerWrite(() => LocalDb.upsertSyncLedgerEntry(
-        status: 'acknowledged',
-        ackedAt: DateTime.now().millisecondsSinceEpoch,
-        metaPatch: {
-          'last_batch_token': tokenHex,
-          'last_batch_id': m.batchId,
-          'last_batch_records': d.records,
-          'last_ack_batches': d.batches,
-          'strap_history_oldest_ts': _strapHistoryOldestTs,
-          'strap_history_newest_ts': _strapHistoryNewestTs,
-        },
-      ));
+      await _bestEffortLedgerWrite(
+        () => LocalDb.upsertSyncLedgerEntry(
+          status: 'acknowledged',
+          ackedAt: DateTime.now().millisecondsSinceEpoch,
+          metaPatch: {
+            'last_batch_token': tokenHex,
+            'last_batch_id': m.batchId,
+            'last_batch_records': d.records,
+            'last_ack_batches': d.batches,
+            'strap_history_oldest_ts': _strapHistoryOldestTs,
+            'strap_history_newest_ts': _strapHistoryNewestTs,
+          },
+        ),
+      );
       // Same event, but a REAL per-chunk row keyed by the token — closes out
       // whatever ack_failed history this token accumulated above.
-      await _bestEffortLedgerWrite(() => LocalDb.upsertSyncLedgerEntry(
-        chunkId: 'batch:$tokenHex',
-        kind: 'historical_batch',
-        status: 'acked',
-        ackedAt: DateTime.now().millisecondsSinceEpoch,
-        metaPatch: {
-          'batch_id': m.batchId,
-          'records': d.records,
-        },
-      ));
+      await _bestEffortLedgerWrite(
+        () => LocalDb.upsertSyncLedgerEntry(
+          chunkId: 'batch:$tokenHex',
+          kind: 'historical_batch',
+          status: 'acked',
+          ackedAt: DateTime.now().millisecondsSinceEpoch,
+          metaPatch: {'batch_id': m.batchId, 'records': d.records},
+        ),
+      );
       _noteStored(); // a banked batch → schedule a (debounced) derive
     } else if (m.sub == SyncMeta.historyComplete) {
       final d = _drain;
@@ -2254,22 +2331,31 @@ class BleEngine {
       // Backlog fully handed over (cursor is now at the live edge). Commit the tail
       // and KEEP LISTENING — live records continue on the same subscription. We do
       // NOT ACK a HISTORY_COMPLETE and we do NOT switch modes.
-      await d.commit(null); // tail (no new token) — persist anything buffered
+      try {
+        await d.commit(null); // tail (no new token)
+      } catch (e) {
+        _log('[SYNC] History tail commit failed; completion withheld: $e');
+        await _teardownSession(intentional: false);
+        _setPhase(BleConnState.idle);
+        return;
+      }
       d.onComplete();
       _historyCompletions++;
       _session?.idleWatchdog?.cancel();
-      await _bestEffortLedgerWrite(() => LocalDb.upsertSyncLedgerEntry(
-        status: 'complete',
-        metaPatch: {
-          'history_complete_at': DateTime.now().millisecondsSinceEpoch,
-          'records_seen': d.records,
-          'batches_acked': d.batches,
-          'history_requests': _historyRequests,
-          'history_completions': _historyCompletions,
-          'strap_history_oldest_ts': _strapHistoryOldestTs,
-          'strap_history_newest_ts': _strapHistoryNewestTs,
-        },
-      ));
+      await _bestEffortLedgerWrite(
+        () => LocalDb.upsertSyncLedgerEntry(
+          status: 'complete',
+          metaPatch: {
+            'history_complete_at': DateTime.now().millisecondsSinceEpoch,
+            'records_seen': d.records,
+            'batches_acked': d.batches,
+            'history_requests': _historyRequests,
+            'history_completions': _historyCompletions,
+            'strap_history_oldest_ts': _strapHistoryOldestTs,
+            'strap_history_newest_ts': _strapHistoryNewestTs,
+          },
+        ),
+      );
       _log(
         '[SYNC] HistoryComplete — backlog drained (${d.records} records, '
         '${_recordGate.dropped} dropped). Still listening for live records.',
@@ -2280,7 +2366,7 @@ class BleEngine {
     }
   }
 
-  Future<void> _awaitBurstTrafficSettle(_DrainController d) async {
+  Future<void> _awaitBurstTrafficSettle(HistoricalDrainController d) async {
     const poll = Duration(milliseconds: 60);
     const budget = Duration(milliseconds: 720);
     const requiredStablePolls = 3;
@@ -2346,7 +2432,10 @@ class BleEngine {
 
     // Stuck-strap: frontier frozen ≥10 min while the strap is >5 min ahead.
     if (_stuckStrap.observe(
-        _sessionNewestUnix, _recordGate.frontierTs, _wallSecs())) {
+      _sessionNewestUnix,
+      _recordGate.frontierTs,
+      _wallSecs(),
+    )) {
       state.strapNeedsReboot = true;
       onState(state);
       _log('[SYNC] stuck-strap tripped — defensive SET_CLOCK.');
@@ -2498,6 +2587,13 @@ class BleEngine {
   /// subsecond value is the safe thing. Then read the clock back (GET_CLOCK) so
   /// the response handler can VERIFY it latched and re-issue on drift.
   Future<void> setClock() async {
+    if (_session?.band.isGen5 ?? false) {
+      // WHOOP 5 uses different RTC opcodes/payloads that remain unverified.
+      // Its v18 historical records already carry usable embedded Unix time.
+      _clockRef = null;
+      _log('[SYNC] WHOOP 5 RTC write skipped; using record timestamps.');
+      return;
+    }
     final ms = DateTime.now().millisecondsSinceEpoch;
     final sec = ms ~/ 1000;
     final subsec = ((ms % 1000) * 32768) ~/ 1000; // 0..32767, 1/32768 s units
@@ -2520,7 +2616,10 @@ class BleEngine {
 
   /// Read the strap RTC. The response carries `clock_epoch`, handled where we
   /// verify drift and re-correlate the strap-RTC ↔ wall clock.
-  Future<void> getClock() => _send(Cmd.getClock, const <int>[]);
+  Future<void> getClock() {
+    if (_session?.band.isGen5 ?? false) return Future<void>.value();
+    return _send(Cmd.getClock, const <int>[]);
+  }
 
   /// On-device wake alarm (SET_ALARM_TIME = 0x42) — the RICH 20-byte form that
   /// actually FIRES on WHOOP 4.0:
@@ -2545,8 +2644,10 @@ class BleEngine {
       Cmd.setAlarmTime,
       AlarmPayloads.rich(when, index: index, haptics: haptics),
     );
-    _log('SET_ALARM_TIME (rich 20B) → sec=${when.millisecondsSinceEpoch ~/ 1000} '
-        'subsec=${AlarmPayloads.subsecOf(when)}');
+    _log(
+      'SET_ALARM_TIME (rich 20B) → sec=${when.millisecondsSinceEpoch ~/ 1000} '
+      'subsec=${AlarmPayloads.subsecOf(when)}',
+    );
   }
 
   /// Time-only alarm (SET_ALARM_TIME = 0x42), SHORT 7-byte form:
@@ -2554,8 +2655,10 @@ class BleEngine {
   /// the band ACKs it but never fires it (no haptic waveform). Use [setAlarm].
   Future<void> setAlarmSimple(DateTime when) async {
     await _send(Cmd.setAlarmTime, AlarmPayloads.simple(when));
-    _log('SET_ALARM_TIME (simple 7B) → sec=${when.millisecondsSinceEpoch ~/ 1000} '
-        '(ACKs but will not fire)');
+    _log(
+      'SET_ALARM_TIME (simple 7B) → sec=${when.millisecondsSinceEpoch ~/ 1000} '
+      '(ACKs but will not fire)',
+    );
   }
 
   Future<void> getAlarm() => _send(Cmd.getAlarmTime, const [revision1]);
@@ -2750,7 +2853,7 @@ class BleEngine {
   void _setHpsTerminal(
     _HpsTerminalKind kind, {
     String? reason,
-    _DrainController? drain,
+    HistoricalDrainController? drain,
   }) {
     final d = drain ?? _drain;
     _lastHpsTerminal = _HpsTerminal(
@@ -2763,7 +2866,7 @@ class BleEngine {
     );
   }
 
-  void _mergeValidatedBurst(_DrainController d) {
+  void _mergeValidatedBurst(HistoricalDrainController d) {
     final burstCounts = d.burstStats.dataPacketCountsByRevision;
     final mergedCounts = <int, int>{
       ..._sessionPacketCounts.dataPacketCountsByRevision,
@@ -2827,6 +2930,14 @@ class BleEngine {
     if (decoded.kind != 'cmd_response') return decoded;
     final opcode = decoded.fields['opcode'];
     if (opcode != Cmd.getDataRange) return decoded;
+    // A plausible integer inside a gen5 payload is not a verified history
+    // timestamp. The byte-scan manufactured backlog and caused endless pulls.
+    if (_session?.band.isGen5 ?? false) {
+      return Decoded(
+        decoded.kind,
+        withoutUnverifiedHistoryRange(decoded.fields),
+      );
+    }
     final payload = frame.inner.length > 3
         ? Uint8List.sublistView(frame.inner, 3)
         : Uint8List(0);
@@ -2861,14 +2972,14 @@ class BleEngine {
 /// [awaitComplete] future that resolves when the band signals HISTORY_COMPLETE (or
 /// the link drops / a safety timeout elapses), so a caller can block until the
 /// backlog is fully handed over without disturbing the continuous listen.
-class _DrainController {
+class HistoricalDrainController {
   final SampleSink onRecord;
   final BatchSink? onRecordsBatch;
   final CommitSyncBatchSink? onCommit;
   final ArchiveSink? onArchive;
   final void Function(String) log;
 
-  _DrainController({
+  HistoricalDrainController({
     required this.onRecord,
     required this.onRecordsBatch,
     required this.onCommit,
@@ -2884,6 +2995,7 @@ class _DrainController {
   final List<ArchiveRecord> _archives = [];
   // Per-burst packet accounting (per-revision counts + sequence gap detection),
   // merged into the session totals when a burst validates.
+  // ignore: library_private_types_in_public_api
   final _BurstStats burstStats = _BurstStats();
 
   int records = 0; // total this connection
@@ -3014,8 +3126,10 @@ class _DrainController {
   /// next offload — dropping them here just avoids ACKing a partial.
   void discardOpenChunk() {
     if (_raws.isEmpty && _archives.isEmpty) return;
-    log('discarding ${_raws.length} un-ACKed buffered records + '
-        '${_archives.length} archived (idle).');
+    log(
+      'discarding ${_raws.length} un-ACKed buffered records + '
+      '${_archives.length} archived (idle).',
+    );
     _raws.clear();
     _samples.clear();
     _archives.clear();
@@ -3029,8 +3143,6 @@ class _DrainController {
     final tokenHex = token
         ?.map((b) => b.toRadixString(16).padLeft(2, '0'))
         .join();
-    lastTrimAdvanced = tokenHex != null && tokenHex != _lastAckedToken;
-    if (tokenHex != null) _lastAckedToken = tokenHex;
     final raws = List<RawRecord>.from(_raws);
     final samples = List<Sample?>.from(_samples);
     final archives = List<ArchiveRecord>.from(_archives);
@@ -3044,8 +3156,14 @@ class _DrainController {
         await onRecordsBatch!(raws, samples);
       }
     } catch (e) {
+      _raws.insertAll(0, raws);
+      _samples.insertAll(0, samples);
+      _archives.insertAll(0, archives);
       log('offload commit error: $e');
+      rethrow;
     }
+    lastTrimAdvanced = tokenHex != null && tokenHex != _lastAckedToken;
+    if (tokenHex != null) _lastAckedToken = tokenHex;
   }
 
   Future<void> flush() => commit(null);

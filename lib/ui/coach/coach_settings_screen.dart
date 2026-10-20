@@ -1,4 +1,4 @@
-// AI Coach settings — BYOK. Enter an OpenAI-compatible base URL + API key, then
+// AI Coach settings — BYOK. Choose Anthropic or an OpenAI-compatible service, then
 // fetch the provider's model list (GET /models) and pick one. Key is stored in the
 // device keychain; nothing here touches OpenStrap servers.
 
@@ -24,6 +24,8 @@ class _CoachSettingsScreenState extends State<CoachSettingsScreen> {
   String _model = '';                       // committed model id (from list or typed)
   bool _obscure = true;
   bool _loadingModels = false;
+  bool _saving = false;
+  late CoachProvider _provider;
   List<String> _models = const [];
   String? _msg;
 
@@ -35,6 +37,28 @@ class _CoachSettingsScreenState extends State<CoachSettingsScreen> {
     _key = TextEditingController(text: cfg.apiKey ?? '');
     _query = TextEditingController();
     _model = cfg.model;
+    _provider = cfg.provider;
+  }
+
+  void _selectProvider(CoachProvider provider) {
+    setState(() {
+      _provider = provider;
+      _base.text = provider == CoachProvider.anthropic
+          ? CoachConfig.anthropicBaseUrl : CoachConfig.defaultBaseUrl;
+      _model = provider == CoachProvider.anthropic
+          ? CoachConfig.anthropicDefaultModel : '';
+      _query.clear();
+      _models = const [];
+      _msg = null;
+    });
+  }
+
+  void _keyChanged(String key) {
+    if (key.trim().startsWith('sk-ant-') &&
+        CoachConfig.normalizeBase(_base.text) == CoachConfig.defaultBaseUrl) {
+      _selectProvider(CoachProvider.anthropic);
+      setState(() => _msg = 'Anthropic key detected. Claude is selected.');
+    }
   }
 
   @override
@@ -50,14 +74,18 @@ class _CoachSettingsScreenState extends State<CoachSettingsScreen> {
       setState(() => _msg = 'Enter your API key first.');
       return;
     }
+    final base = _base.text;
+    final key = _key.text;
     setState(() { _loadingModels = true; _msg = null; });
     try {
-      final ids = await CoachEngine.fetchModels(_base.text, _key.text);
+      final ids = await CoachEngine.fetchModels(base, key);
+      if (!mounted || base != _base.text || key != _key.text) return;
       setState(() {
         _models = ids;
         _msg = ids.isEmpty ? 'Provider returned no models — type one manually.' : '${ids.length} models found. Search and tap to pick.';
       });
     } catch (e) {
+      if (!mounted || base != _base.text || key != _key.text) return;
       setState(() => _msg = e is CoachException ? e.message : 'Could not list models: $e');
     } finally {
       if (mounted) setState(() => _loadingModels = false);
@@ -73,6 +101,20 @@ class _CoachSettingsScreenState extends State<CoachSettingsScreen> {
       setState(() => _msg = 'Pick or type a model first.');
       return;
     }
+    final uri = Uri.tryParse(_base.text.trim());
+    if (uri == null || !uri.hasAuthority ||
+        (uri.scheme != 'https' && uri.scheme != 'http')) {
+      setState(() => _msg = 'Enter a valid provider URL.');
+      return;
+    }
+    if (_key.text.trim().isEmpty) {
+      setState(() => _msg = 'Enter your provider API key first.');
+      return;
+    }
+    if (_provider == CoachProvider.anthropic && !_chosen.startsWith('claude-')) {
+      setState(() => _msg = 'Choose a Claude model for Anthropic. Fetch lists the models available to your key.');
+      return;
+    }
     // Capture the messenger + navigator BEFORE the await (no BuildContext across
     // an async gap), then guard pop() with canPop(): a bare Navigator.pop() after
     // the await crashed with "Bad state: No element" (NavigatorState.pop's
@@ -80,8 +122,20 @@ class _CoachSettingsScreenState extends State<CoachSettingsScreen> {
     // completed — being `mounted` doesn't guarantee a poppable route.
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
-    await cfg.save(baseUrl: _base.text, apiKey: _key.text, model: _chosen);
+    setState(() { _saving = true; _msg = null; });
+    try {
+      await cfg.save(baseUrl: _base.text, apiKey: _key.text, model: _chosen);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _msg = 'Could not save your API key securely. Please try again.';
+        });
+      }
+      return;
+    }
     if (!mounted) return;
+    setState(() => _saving = false);
     messenger.showSnackBar(
       const SnackBar(content: Text('AI Coach settings saved.')),
     );
@@ -173,8 +227,30 @@ class _CoachSettingsScreenState extends State<CoachSettingsScreen> {
             const SizedBox(height: Sp.x5),
 
             const SectionHeader('Provider'),
+            DropdownButton<CoachProvider>(
+              value: _provider,
+              isExpanded: true,
+              items: const [
+                DropdownMenuItem(value: CoachProvider.anthropic,
+                    child: Text('Anthropic (Claude)')),
+                DropdownMenuItem(value: CoachProvider.openAiCompatible,
+                    child: Text('OpenAI / compatible provider')),
+              ],
+              onChanged: _saving ? null : (value) {
+                if (value != null) _selectProvider(value);
+              },
+            ),
             TextField(
               controller: _base,
+              readOnly: _provider == CoachProvider.anthropic,
+              onChanged: (value) => setState(() {
+                _provider = CoachConfig.providerForBase(value);
+                _models = const [];
+                _msg = null;
+                if (_provider == CoachProvider.anthropic && !_model.startsWith('claude-')) {
+                  _model = CoachConfig.anthropicDefaultModel;
+                }
+              }),
               decoration: const InputDecoration(
                 labelText: 'Base URL',
                 hintText: 'https://api.openai.com/v1',
@@ -184,6 +260,9 @@ class _CoachSettingsScreenState extends State<CoachSettingsScreen> {
             TextField(
               controller: _key,
               obscureText: _obscure,
+              autocorrect: false,
+              enableSuggestions: false,
+              onChanged: _keyChanged,
               decoration: InputDecoration(
                 labelText: 'API key',
                 suffixIcon: IconButton(
@@ -193,18 +272,21 @@ class _CoachSettingsScreenState extends State<CoachSettingsScreen> {
               ),
             ),
             const SizedBox(height: Sp.x3),
-            Text('Works with OpenAI, OpenRouter, Groq, Together, local Ollama / LM Studio, '
-                'and anything OpenAI-compatible.', style: AppText.captionMuted),
+            Text(_provider == CoachProvider.anthropic
+                ? 'Use an Anthropic Console API key (sk-ant-…). Claude app subscriptions do not include API credit. Fetch checks your key and lists available models.'
+                : 'Works with OpenAI, OpenRouter, Groq, Together, local Ollama / LM Studio, and other compatible providers.',
+                style: AppText.captionMuted),
 
             const SizedBox(height: Sp.x5),
             const SectionHeader('Model'),
             Row(children: [
               Expanded(child: TextField(
                 controller: _query,
-                onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(
+                onChanged: (_) => setState(() => _model = ''),
+                decoration: InputDecoration(
                   labelText: 'Search or type a model',
-                  hintText: 'e.g. minimax, gpt-4o, llama',
+                  hintText: _provider == CoachProvider.anthropic
+                      ? CoachConfig.anthropicDefaultModel : 'Provider model id',
                 ),
               )),
               const SizedBox(width: Sp.x3),
@@ -223,7 +305,8 @@ class _CoachSettingsScreenState extends State<CoachSettingsScreen> {
             ],
 
             const SizedBox(height: Sp.x7),
-            FilledButton(onPressed: _save, child: const Text('Save')),
+            FilledButton(onPressed: _saving ? null : _save,
+                child: Text(_saving ? 'Saving…' : 'Save')),
             const SizedBox(height: 60),
           ],
         ),

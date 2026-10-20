@@ -190,6 +190,9 @@ void main() {
     test('continues when strap is >5min ahead and trim advanced', () {
       expect(cont(strapNewest: 2000, frontier: 1000), isTrue);
     });
+    test('console-only completions do not chase a stale data range', () {
+      expect(cont(strapNewest: 2000, frontier: 1000, rows: 0), isFalse);
+    });
     test(
       'stops when disconnected',
       () => expect(cont(connected: false), isFalse),
@@ -212,10 +215,7 @@ void main() {
     );
     test(
       'missing strap newest information + no rows → stops',
-      () => expect(
-        cont(strapNewest: null, frontier: 1000, rows: 0),
-        isFalse,
-      ),
+      () => expect(cont(strapNewest: null, frontier: 1000, rows: 0), isFalse),
     );
   });
 
@@ -469,18 +469,21 @@ void main() {
       expect(snapToGrid(1234567), (1234567 ~/ 300) * 300);
     });
 
-    test('sub-day drift is left alone (returns null — trust embedded time)', () {
-      // offset = clockWall - deviceClock = 3600 (1h) ≤ 1 day → no correction.
-      expect(
-        ClockPolicy.correctRecordTs(
-          wall - 100000,
-          wallNow: wall,
-          deviceClock: wall - 3600,
-          clockWall: wall,
-        ),
-        isNull,
-      );
-    });
+    test(
+      'sub-day drift is left alone (returns null — trust embedded time)',
+      () {
+        // offset = clockWall - deviceClock = 3600 (1h) ≤ 1 day → no correction.
+        expect(
+          ClockPolicy.correctRecordTs(
+            wall - 100000,
+            wallNow: wall,
+            deviceClock: wall - 3600,
+            clockWall: wall,
+          ),
+          isNull,
+        );
+      },
+    );
 
     test('a >1-day offset is applied AND snapped to the 5-min grid', () {
       const daysOff = 40 * 86400; // unset RTC parked ~40 days in the past
@@ -536,7 +539,10 @@ void main() {
     });
 
     test('at or over kLinkFreshnessSeconds is stale', () {
-      expect(isLinkStale(const Duration(seconds: kLinkFreshnessSeconds)), isTrue);
+      expect(
+        isLinkStale(const Duration(seconds: kLinkFreshnessSeconds)),
+        isTrue,
+      );
       expect(isLinkStale(const Duration(seconds: 31)), isTrue);
       expect(isLinkStale(const Duration(minutes: 10)), isTrue);
     });
@@ -564,7 +570,10 @@ void main() {
 
     test('past the future margin is flagged corrupt', () {
       expect(isCorruptFutureRtc(wall + kFutureMargin + 1, wall), isTrue);
-      expect(isCorruptFutureRtc(wall + 365 * 86400, wall), isTrue); // a year out
+      expect(
+        isCorruptFutureRtc(wall + 365 * 86400, wall),
+        isTrue,
+      ); // a year out
     });
   });
 
@@ -610,13 +619,19 @@ void main() {
     test('a custom cooldown is honoured', () {
       final last = now.subtract(const Duration(hours: 2));
       expect(
-        shouldRenotifyStaleness(last, now,
-            renotifyAfter: const Duration(hours: 1)),
+        shouldRenotifyStaleness(
+          last,
+          now,
+          renotifyAfter: const Duration(hours: 1),
+        ),
         isTrue,
       );
       expect(
-        shouldRenotifyStaleness(last, now,
-            renotifyAfter: const Duration(hours: 3)),
+        shouldRenotifyStaleness(
+          last,
+          now,
+          renotifyAfter: const Duration(hours: 3),
+        ),
         isFalse,
       );
     });
